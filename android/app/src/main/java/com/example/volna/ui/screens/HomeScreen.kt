@@ -39,9 +39,10 @@ fun HomeScreen(
     val searchQuery by viewModel.searchQuery.collectAsState()
     val sortOption by viewModel.sortOption.collectAsState()
     val isScanning by viewModel.isScanning.collectAsState()
+    val isVisualizerEnabled by viewModel.isVisualizerEnabled.collectAsState()
 
     var selectedTab by remember { mutableIntStateOf(0) }
-    val tabs = listOf("Треки", "Исполнители", "Альбомы", "Плейлисты")
+    val tabs = listOf("Треки", "Исполнители", "Альбомы", "Папки", "Плейлисты")
 
     var showSortMenu by remember { mutableStateOf(false) }
     var showCreatePlaylistDialog by remember { mutableStateOf(false) }
@@ -78,12 +79,14 @@ fun HomeScreen(
                     }
 
                     Row {
-                        IconButton(onClick = onNavigateToVisualizer) {
-                            Icon(
-                                imageVector = Icons.Default.GraphicEq,
-                                contentDescription = "Визуализатор",
-                                tint = VolnaTurquoise
-                            )
+                        if (isVisualizerEnabled) {
+                            IconButton(onClick = onNavigateToVisualizer) {
+                                Icon(
+                                    imageVector = Icons.Default.GraphicEq,
+                                    contentDescription = "Визуализатор",
+                                    tint = VolnaTurquoise
+                                )
+                            }
                         }
                         IconButton(onClick = { viewModel.scanMusic() }) {
                             if (isScanning) {
@@ -332,6 +335,74 @@ fun HomeScreen(
                 }
 
                 3 -> {
+                    // Раздел "Папки"
+                    val foldersGroup = remember(tracks) {
+                        tracks.groupBy { track ->
+                            val path = track.contentUri.path ?: ""
+                            val segments = path.split("/").filter { it.isNotBlank() }
+                            if (segments.size > 1) segments[segments.size - 2] else "Music"
+                        }.toList().sortedBy { it.first.lowercase() }
+                    }
+                    LazyColumn(
+                        modifier = Modifier.fillMaxSize(),
+                        contentPadding = PaddingValues(16.dp)
+                    ) {
+                        item {
+                            Text(
+                                text = "Папок с аудиофайлами: ${foldersGroup.size}",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(bottom = 8.dp)
+                            )
+                        }
+                        items(foldersGroup) { (folderName, folderTracks) ->
+                            Card(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 4.dp)
+                                    .clickable {
+                                        if (folderTracks.isNotEmpty()) {
+                                            viewModel.playTrack(folderTracks.first(), folderTracks)
+                                        }
+                                    },
+                                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(16.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        modifier = Modifier.weight(1f)
+                                    ) {
+                                        Icon(Icons.Default.Folder, contentDescription = null, tint = VolnaTurquoise)
+                                        Spacer(modifier = Modifier.width(16.dp))
+                                        Column {
+                                            Text(text = folderName, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                                            Text(
+                                                text = "${folderTracks.size} аудиофайлов",
+                                                style = MaterialTheme.typography.bodyMedium,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        }
+                                    }
+                                    IconButton(
+                                        onClick = {
+                                            if (folderTracks.isNotEmpty()) {
+                                                viewModel.playTrack(folderTracks.first(), folderTracks)
+                                            }
+                                        }
+                                    ) {
+                                        Icon(Icons.Default.PlayArrow, contentDescription = "Слушать папку", tint = VolnaTurquoise)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                4 -> {
                     // Раздел "Плейлисты"
                     Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
                         Button(

@@ -3,8 +3,9 @@ import {
   Play, Pause, SkipBack, SkipForward, RotateCcw, RotateCw,
   Shuffle, Repeat, Repeat1, Heart, ListPlus, Search,
   SlidersHorizontal, Moon, Sun, Monitor, Timer,
-  Folder, Library, Disc3, Radio, RefreshCw, Info, Music,
+  Folder, FolderOpen, FolderPlus, Library, Disc3, Radio, RefreshCw, Info, Music,
   Check, Copy, Download, Code2, Sparkles, ChevronUp, ChevronDown,
+  ChevronLeft, ChevronRight, ArrowDown,
   Volume2, VolumeX, Upload, X, Trash2, ArrowLeft
 } from 'lucide-react';
 import { audioManager } from './audioEngine';
@@ -20,6 +21,7 @@ interface TrackItem {
   coverGradient: string;
   audioUrl?: string;
   isCustomUpload?: boolean;
+  folder?: string;
 }
 
 const INITIAL_TRACKS: TrackItem[] = [
@@ -30,7 +32,8 @@ const INITIAL_TRACKS: TrackItem[] = [
     album: "Электромагнитные сны",
     durationSeconds: 216,
     isFavorite: true,
-    coverGradient: "from-cyan-500 via-teal-500 to-blue-600"
+    coverGradient: "from-cyan-500 via-teal-500 to-blue-600",
+    folder: "Внутренняя память/Music/Synthwave"
   },
   {
     id: 2,
@@ -39,7 +42,8 @@ const INITIAL_TRACKS: TrackItem[] = [
     album: "Полярные частоты",
     durationSeconds: 248,
     isFavorite: false,
-    coverGradient: "from-purple-600 via-indigo-500 to-teal-400"
+    coverGradient: "from-purple-600 via-indigo-500 to-teal-400",
+    folder: "Внутренняя память/Music/CyberEast"
   },
   {
     id: 3,
@@ -48,7 +52,8 @@ const INITIAL_TRACKS: TrackItem[] = [
     album: "Магистраль 80",
     durationSeconds: 184,
     isFavorite: true,
-    coverGradient: "from-teal-400 via-cyan-600 to-purple-800"
+    coverGradient: "from-teal-400 via-cyan-600 to-purple-800",
+    folder: "Внутренняя память/Music/Synthwave"
   },
   {
     id: 4,
@@ -57,7 +62,8 @@ const INITIAL_TRACKS: TrackItem[] = [
     album: "Атлантика",
     durationSeconds: 232,
     isFavorite: false,
-    coverGradient: "from-blue-600 via-violet-600 to-fuchsia-600"
+    coverGradient: "from-blue-600 via-violet-600 to-fuchsia-600",
+    folder: "SD-карта/Audio/Atlantic"
   },
   {
     id: 5,
@@ -66,7 +72,8 @@ const INITIAL_TRACKS: TrackItem[] = [
     album: "Тени города",
     durationSeconds: 195,
     isFavorite: false,
-    coverGradient: "from-fuchsia-500 via-purple-600 to-cyan-500"
+    coverGradient: "from-fuchsia-500 via-purple-600 to-cyan-500",
+    folder: "Внутренняя память/Music/Lo-Fi"
   }
 ];
 
@@ -80,9 +87,11 @@ export default function App() {
     { id: 1, name: "Для ночных поездок", trackIds: [1, 3] },
     { id: 2, name: "Глубокая концентрация", trackIds: [2, 4] }
   ]);
-  const [activeLibraryTab, setActiveLibraryTab] = useState<'tracks' | 'artists' | 'albums' | 'playlists' | 'favorites'>('tracks');
+  const [activeLibraryTab, setActiveLibraryTab] = useState<'tracks' | 'artists' | 'albums' | 'folders' | 'playlists' | 'favorites'>('tracks');
+  const [selectedFolder, setSelectedFolder] = useState<string | null>(null);
+  const [folderSortBy, setFolderSortBy] = useState<'name' | 'count'>('name');
   const [searchQuery, setSearchQuery] = useState('');
-  const [sortOption, setSortOption] = useState<'title' | 'artist' | 'album' | 'duration'>('title');
+  const [sortOption, setSortOption] = useState<'title' | 'artist' | 'album' | 'folder' | 'duration'>('title');
 
   // Player state
   const [currentTrackIndex, setCurrentTrackIndex] = useState<number>(0);
@@ -95,7 +104,13 @@ export default function App() {
   const [isFullscreenPlayer, setIsFullscreenPlayer] = useState(false);
 
   // Visualizer settings
-  const [visualizerEnabled, setVisualizerEnabled] = useState(true);
+  const [visualizerEnabled, setVisualizerEnabled] = useState<boolean>(() => {
+    try {
+      const saved = localStorage.getItem('volna_visualizer_enabled');
+      if (saved !== null) return saved === 'true';
+    } catch (e) {}
+    return true;
+  });
   const [visualizerType, setVisualizerType] = useState<'spectrum' | 'wave' | 'circle'>('spectrum');
   const [visualizerSensitivity, setVisualizerSensitivity] = useState(1.2);
 
@@ -115,6 +130,7 @@ export default function App() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const animationFrameRef = useRef<number | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const folderInputRef = useRef<HTMLInputElement | null>(null);
 
   const currentTrack = tracks[currentTrackIndex] || tracks[0];
 
@@ -333,6 +349,87 @@ export default function App() {
     }
   };
 
+  // Fullscreen swipe gestures:
+  // - Top to bottom (dy > 0): close player window
+  // - Right to left (dx < 0): next track
+  // - Left to right (dx > 0): previous track
+  const [touchStartX, setTouchStartX] = useState<number | null>(null);
+  const [touchStartY, setTouchStartY] = useState<number | null>(null);
+  const [touchOffsetX, setTouchOffsetX] = useState(0);
+  const [touchOffsetY, setTouchOffsetY] = useState(0);
+  const [isSwiping, setIsSwiping] = useState(false);
+  const [swipeCue, setSwipeCue] = useState<'down' | 'next' | 'prev' | null>(null);
+  const isInteractiveTargetRef = useRef(false);
+
+  const handleSwipeStart = (clientX: number, clientY: number, target: EventTarget | null) => {
+    if (target && (target as HTMLElement).closest('input, button, a')) {
+      isInteractiveTargetRef.current = true;
+      return;
+    }
+    isInteractiveTargetRef.current = false;
+    setTouchStartX(clientX);
+    setTouchStartY(clientY);
+    setTouchOffsetX(0);
+    setTouchOffsetY(0);
+    setIsSwiping(true);
+    setSwipeCue(null);
+  };
+
+  const handleSwipeMove = (clientX: number, clientY: number) => {
+    if (isInteractiveTargetRef.current || touchStartX === null || touchStartY === null) return;
+    const dx = clientX - touchStartX;
+    const dy = clientY - touchStartY;
+
+    if (Math.abs(dy) > Math.abs(dx)) {
+      // Vertical swipe: downward moves the modal to close it
+      if (dy > 0) {
+        setTouchOffsetY(dy);
+        setTouchOffsetX(0);
+        setSwipeCue(dy > 40 ? 'down' : null);
+      } else {
+        setTouchOffsetY(0);
+        setSwipeCue(null);
+      }
+    } else {
+      // Horizontal swipe: right-to-left (next) or left-to-right (prev)
+      setTouchOffsetX(dx);
+      setTouchOffsetY(0);
+      if (dx < -35) {
+        setSwipeCue('next');
+      } else if (dx > 35) {
+        setSwipeCue('prev');
+      } else {
+        setSwipeCue(null);
+      }
+    }
+  };
+
+  const handleSwipeEnd = () => {
+    if (!isInteractiveTargetRef.current && (touchStartX !== null || touchStartY !== null)) {
+      const SWIPE_DISMISS_THRESHOLD = 70; // 70px downwards
+      const SWIPE_TRACK_THRESHOLD = 50; // 50px horizontal
+
+      if (touchOffsetY > SWIPE_DISMISS_THRESHOLD) {
+        // Сверху вниз: убрать окно воспроизведения
+        setIsFullscreenPlayer(false);
+      } else if (touchOffsetX < -SWIPE_TRACK_THRESHOLD) {
+        // Справа налево: следующий трек
+        handleNextTrack();
+      } else if (touchOffsetX > SWIPE_TRACK_THRESHOLD) {
+        // Слева направо: предыдущий трек
+        handlePrevTrack();
+      }
+    }
+
+    setTouchStartX(null);
+    setTouchStartY(null);
+    setTouchOffsetX(0);
+    setTouchOffsetY(0);
+    setIsSwiping(false);
+    setSwipeCue(null);
+    isInteractiveTargetRef.current = false;
+  };
+
   const handleSeek = (e: React.ChangeEvent<HTMLInputElement>) => {
     const time = Number(e.target.value);
     setCurrentTime(time);
@@ -354,7 +451,8 @@ export default function App() {
       const colors = [
         "from-cyan-500 via-teal-500 to-indigo-600",
         "from-purple-600 via-pink-500 to-cyan-400",
-        "from-emerald-400 via-teal-600 to-blue-700"
+        "from-emerald-400 via-teal-600 to-blue-700",
+        "from-amber-400 via-orange-500 to-rose-600"
       ];
       newTracks.push({
         id: Date.now() + idx,
@@ -365,12 +463,57 @@ export default function App() {
         isFavorite: false,
         coverGradient: colors[idx % colors.length],
         audioUrl: url,
-        isCustomUpload: true
+        isCustomUpload: true,
+        folder: "Внутренняя память/Загрузки"
       });
     });
 
     setTracks(prev => [...newTracks, ...prev]);
     handleSelectTrack(0);
+  };
+
+  const handleFolderUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+
+    const newTracks: TrackItem[] = [];
+    Array.from(files).forEach((file: File, idx) => {
+      // Filter common audio files
+      if (!file.type.startsWith('audio/') && !file.name.match(/\.(mp3|wav|ogg|flac|m4a|aac|opus|weba)$/i)) {
+        return;
+      }
+      const url = URL.createObjectURL(file);
+      const cleanName = file.name.replace(/\.[^/.]+$/, "");
+      const pathParts = file.webkitRelativePath ? file.webkitRelativePath.split('/') : [];
+      const folderName = pathParts.length > 1
+        ? pathParts.slice(0, -1).join('/')
+        : "Внутренняя память/Музыка";
+
+      const colors = [
+        "from-cyan-500 via-teal-500 to-indigo-600",
+        "from-purple-600 via-pink-500 to-cyan-400",
+        "from-emerald-400 via-teal-600 to-blue-700",
+        "from-amber-400 via-orange-500 to-rose-600"
+      ];
+
+      newTracks.push({
+        id: Date.now() + idx,
+        title: cleanName,
+        artist: "Локальный файл",
+        album: folderName.split('/').pop() || "Музыка",
+        durationSeconds: 180,
+        isFavorite: false,
+        coverGradient: colors[idx % colors.length],
+        audioUrl: url,
+        isCustomUpload: true,
+        folder: folderName
+      });
+    });
+
+    if (newTracks.length > 0) {
+      setTracks(prev => [...newTracks, ...prev]);
+      handleSelectTrack(0);
+    }
   };
 
   const formatSeconds = (sec: number) => {
@@ -390,13 +533,15 @@ export default function App() {
       result = result.filter(t =>
         t.title.toLowerCase().includes(q) ||
         t.artist.toLowerCase().includes(q) ||
-        t.album.toLowerCase().includes(q)
+        t.album.toLowerCase().includes(q) ||
+        (t.folder && t.folder.toLowerCase().includes(q))
       );
     }
     return [...result].sort((a, b) => {
       if (sortOption === 'title') return a.title.localeCompare(b.title);
       if (sortOption === 'artist') return a.artist.localeCompare(b.artist);
       if (sortOption === 'album') return a.album.localeCompare(b.album);
+      if (sortOption === 'folder') return (a.folder || '').localeCompare(b.folder || '');
       if (sortOption === 'duration') return b.durationSeconds - a.durationSeconds;
       return 0;
     });
@@ -421,6 +566,30 @@ export default function App() {
     });
     return Array.from(map.entries()).sort((a, b) => a[0].localeCompare(b[0]));
   }, [tracks]);
+
+  const foldersList = useMemo(() => {
+    const map = new Map<string, TrackItem[]>();
+    tracks.forEach(t => {
+      const folderName = t.folder || 'Внутренняя память/Music';
+      const list = map.get(folderName) || [];
+      list.push(t);
+      map.set(folderName, list);
+    });
+
+    let entries = Array.from(map.entries());
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase();
+      entries = entries.filter(([folderName, folderTracks]) =>
+        folderName.toLowerCase().includes(q) ||
+        folderTracks.some(t => t.title.toLowerCase().includes(q) || t.artist.toLowerCase().includes(q))
+      );
+    }
+
+    if (folderSortBy === 'count') {
+      return entries.sort((a, b) => b[1].length - a[1].length);
+    }
+    return entries.sort((a, b) => a[0].localeCompare(b[0]));
+  }, [tracks, folderSortBy, searchQuery]);
 
   const filteredAndroidFiles = useMemo(() => {
     if (activeStageFilter === 'all') return ANDROID_FILES;
@@ -528,72 +697,77 @@ export default function App() {
             {/* Left Column: Visualizer & Current Playing Stage */}
             <div className="lg:col-span-5 flex flex-col gap-4 sm:gap-5 min-w-0">
               
-              {/* Visualizer Card */}
-              <div className={`rounded-2xl p-4 sm:p-5 border relative overflow-hidden ${
-                themeMode === 'dark'
-                  ? 'bg-gradient-to-b from-[#0E162B] to-[#080E20] border-[#16203D]'
-                  : 'bg-white border-slate-200 shadow-sm'
-              }`}>
-                <div className="flex items-center justify-between mb-3 sm:mb-4 gap-2 flex-wrap sm:flex-nowrap">
-                  <div className="flex items-center gap-2 min-w-0">
-                    <Sparkles className="w-4 h-4 text-[#00F5D4] shrink-0" />
-                    <span className="text-sm font-semibold tracking-wide truncate">Неоновый визуализатор</span>
-                  </div>
-                  <div className="flex items-center gap-1 bg-[#060B18]/60 p-1 rounded-lg border border-[#16203D] shrink-0">
-                    {(['spectrum', 'wave', 'circle'] as const).map(mode => (
-                      <button
-                        key={mode}
-                        id={`btn-visualizer-mode-${mode}`}
-                        onClick={() => setVisualizerType(mode)}
-                        className={`px-2 py-1 text-xs rounded font-medium transition-all ${
-                          visualizerType === mode
-                            ? 'bg-[#00F5D4] text-black shadow-sm'
-                            : 'text-slate-400 hover:text-white'
-                        }`}
-                      >
-                        {mode === 'spectrum' ? 'Спектр' : mode === 'wave' ? 'Волна' : 'Круг'}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                {/* Canvas Stage */}
-                <div className="w-full h-36 sm:h-44 rounded-xl bg-[#060B18] border border-[#16203D] relative overflow-hidden flex items-center justify-center">
-                  <canvas
-                    ref={canvasRef}
-                    width={480}
-                    height={180}
-                    className="w-full h-full object-cover"
-                  />
-                  {!isPlaying && (
-                    <div className="absolute inset-0 bg-black/40 backdrop-blur-[1px] flex flex-col items-center justify-center pointer-events-none p-2 text-center">
-                      <Music className="w-5 h-5 sm:w-6 sm:h-6 text-[#00F5D4] mb-1.5 animate-bounce" />
-                      <span className="text-xs text-slate-300 font-medium">Нажмите Play для живой волны</span>
+              {/* Visualizer Card (Hidden if disabled in Settings) */}
+              {visualizerEnabled && (
+                <div
+                  id="card-neon-visualizer"
+                  className={`rounded-2xl p-4 sm:p-5 border relative overflow-hidden transition-all duration-300 ${
+                    themeMode === 'dark'
+                      ? 'bg-gradient-to-b from-[#0E162B] to-[#080E20] border-[#16203D]'
+                      : 'bg-white border-slate-200 shadow-sm'
+                  }`}
+                >
+                  <div className="flex items-center justify-between mb-3 sm:mb-4 gap-2 flex-wrap sm:flex-nowrap">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <Sparkles className="w-4 h-4 text-[#00F5D4] shrink-0" />
+                      <span className="text-sm font-semibold tracking-wide truncate">Неоновый визуализатор</span>
                     </div>
-                  )}
-                </div>
+                    <div className="flex items-center gap-1 bg-[#060B18]/60 p-1 rounded-lg border border-[#16203D] shrink-0">
+                      {(['spectrum', 'wave', 'circle'] as const).map(mode => (
+                        <button
+                          key={mode}
+                          id={`btn-visualizer-mode-${mode}`}
+                          onClick={() => setVisualizerType(mode)}
+                          className={`px-2 py-1 text-xs rounded font-medium transition-all ${
+                            visualizerType === mode
+                              ? 'bg-[#00F5D4] text-black shadow-sm'
+                              : 'text-slate-400 hover:text-white'
+                          }`}
+                        >
+                          {mode === 'spectrum' ? 'Спектр' : mode === 'wave' ? 'Волна' : 'Круг'}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
 
-                {/* Visualizer controls */}
-                <div className="mt-3 flex items-center justify-between text-xs text-slate-400 gap-2">
-                  <span className="flex items-center gap-1.5 min-w-0 truncate">
-                    <span className={`w-2 h-2 rounded-full shrink-0 ${isPlaying ? 'bg-[#00F5D4] animate-ping' : 'bg-slate-500'}`} />
-                    <span className="truncate">{isPlaying ? 'Аудиопоток активен' : 'Ожидание воспроизведения'}</span>
-                  </span>
-                  <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
-                    <span className="hidden sm:inline">Чувствительность:</span>
-                    <input
-                      type="range"
-                      min="0.5"
-                      max="2.5"
-                      step="0.1"
-                      value={visualizerSensitivity}
-                      onChange={e => setVisualizerSensitivity(Number(e.target.value))}
-                      className="w-16 sm:w-20 accent-[#00F5D4] cursor-pointer"
-                      title="Чувствительность визуализатора"
+                  {/* Canvas Stage */}
+                  <div className="w-full h-36 sm:h-44 rounded-xl bg-[#060B18] border border-[#16203D] relative overflow-hidden flex items-center justify-center">
+                    <canvas
+                      ref={canvasRef}
+                      width={480}
+                      height={180}
+                      className="w-full h-full object-cover"
                     />
+                    {!isPlaying && (
+                      <div className="absolute inset-0 bg-black/40 backdrop-blur-[1px] flex flex-col items-center justify-center pointer-events-none p-2 text-center">
+                        <Music className="w-5 h-5 sm:w-6 sm:h-6 text-[#00F5D4] mb-1.5 animate-bounce" />
+                        <span className="text-xs text-slate-300 font-medium">Нажмите Play для живой волны</span>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Visualizer controls */}
+                  <div className="mt-3 flex items-center justify-between text-xs text-slate-400 gap-2">
+                    <span className="flex items-center gap-1.5 min-w-0 truncate">
+                      <span className={`w-2 h-2 rounded-full shrink-0 ${isPlaying ? 'bg-[#00F5D4] animate-ping' : 'bg-slate-500'}`} />
+                      <span className="truncate">{isPlaying ? 'Аудиопоток активен' : 'Ожидание воспроизведения'}</span>
+                    </span>
+                    <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
+                      <span className="hidden sm:inline">Чувствительность:</span>
+                      <input
+                        type="range"
+                        min="0.5"
+                        max="2.5"
+                        step="0.1"
+                        value={visualizerSensitivity}
+                        onChange={e => setVisualizerSensitivity(Number(e.target.value))}
+                        className="w-16 sm:w-20 accent-[#00F5D4] cursor-pointer"
+                        title="Чувствительность визуализатора"
+                      />
+                    </div>
                   </div>
                 </div>
-              </div>
+              )}
 
               {/* Now Playing Widget Card */}
               <div className={`rounded-2xl p-4 sm:p-5 border ${
@@ -797,6 +971,7 @@ export default function App() {
                     <option value="title">По названию</option>
                     <option value="artist">По исполнителю</option>
                     <option value="album">По альбому</option>
+                    <option value="folder">По папкам</option>
                     <option value="duration">По длительности</option>
                   </select>
                 </div>
@@ -808,13 +983,17 @@ export default function App() {
                   { id: 'tracks', label: 'Треки', count: tracks.length },
                   { id: 'artists', label: 'Исполнители', count: artistsList.length },
                   { id: 'albums', label: 'Альбомы', count: albumsList.length },
+                  { id: 'folders', label: 'Папки', count: foldersList.length },
                   { id: 'playlists', label: 'Плейлисты', count: playlists.length },
                   { id: 'favorites', label: 'Любимые', count: tracks.filter(t => t.isFavorite).length }
                 ].map(tab => (
                   <button
                     key={tab.id}
                     id={`tab-library-${tab.id}`}
-                    onClick={() => setActiveLibraryTab(tab.id as any)}
+                    onClick={() => {
+                      setActiveLibraryTab(tab.id as any);
+                      if (tab.id !== 'folders') setSelectedFolder(null);
+                    }}
                     className={`px-3 py-2 rounded-t-lg text-xs font-semibold whitespace-nowrap transition-all border-b-2 ${
                       activeLibraryTab === tab.id
                         ? 'border-[#00F5D4] text-[#00F5D4] bg-[#00F5D4]/10'
@@ -944,6 +1123,248 @@ export default function App() {
                         </div>
                       </div>
                     ))}
+                  </div>
+                ) : activeLibraryTab === 'folders' ? (
+                  <div className="p-3 flex flex-col gap-4">
+                    {/* Top sub-bar for Folders */}
+                    <div className="flex flex-col sm:flex-row gap-3 items-stretch sm:items-center justify-between pb-2 border-b border-[#16203D]">
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs font-semibold text-slate-300">
+                          {selectedFolder ? (
+                            <span className="text-slate-400">Просмотр папки</span>
+                          ) : (
+                            <span>Папки с аудиофайлами: <span className="text-[#00F5D4]">{foldersList.length}</span></span>
+                          )}
+                        </span>
+                        {!selectedFolder && (
+                          <div className="flex items-center gap-1 ml-2 bg-[#060B18] p-1 rounded-lg border border-[#16203D]">
+                            <button
+                              onClick={() => setFolderSortBy('name')}
+                              className={`px-2 py-0.5 rounded text-[11px] font-medium transition-all ${
+                                folderSortBy === 'name' ? 'bg-[#00F5D4] text-black' : 'text-slate-400 hover:text-white'
+                              }`}
+                            >
+                              Имя
+                            </button>
+                            <button
+                              onClick={() => setFolderSortBy('count')}
+                              className={`px-2 py-0.5 rounded text-[11px] font-medium transition-all ${
+                                folderSortBy === 'count' ? 'bg-[#00F5D4] text-black' : 'text-slate-400 hover:text-white'
+                              }`}
+                            >
+                              Файлы
+                            </button>
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={() => folderInputRef.current?.click()}
+                          className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-[#00F5D4]/15 hover:bg-[#00F5D4]/25 text-[#00F5D4] border border-[#00F5D4]/30 text-xs font-semibold transition-all shadow-sm"
+                        >
+                          <FolderPlus className="w-4 h-4" />
+                          <span>Выбрать папку на устройстве</span>
+                        </button>
+                        <input
+                          type="file"
+                          ref={folderInputRef}
+                          onChange={handleFolderUpload}
+                          multiple
+                          {...({ webkitdirectory: "", directory: "" } as any)}
+                          className="hidden"
+                        />
+                      </div>
+                    </div>
+
+                    {/* View: specific folder or folder list */}
+                    {selectedFolder ? (
+                      <div>
+                        {/* Folder Header */}
+                        {(() => {
+                          const currentFolderTracks = tracks.filter(t => (t.folder || 'Внутренняя память/Music') === selectedFolder);
+                          const totalSec = currentFolderTracks.reduce((sum, t) => sum + t.durationSeconds, 0);
+
+                          return (
+                            <div className="flex flex-col gap-3">
+                              <div className="flex items-center justify-between">
+                                <button
+                                  onClick={() => setSelectedFolder(null)}
+                                  className="flex items-center gap-1.5 text-xs text-[#00F5D4] hover:underline font-semibold"
+                                >
+                                  <ArrowLeft className="w-4 h-4" />
+                                  <span>Все папки устройства</span>
+                                </button>
+                                <button
+                                  onClick={() => {
+                                    if (currentFolderTracks.length > 0) {
+                                      handleSelectTrack(tracks.findIndex(t => t.id === currentFolderTracks[0].id));
+                                    }
+                                  }}
+                                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-[#00F5D4] text-black text-xs font-bold hover:bg-[#00D2FF] transition-all"
+                                >
+                                  <Play className="w-3.5 h-3.5 fill-black" />
+                                  <span>Слушать всю папку ({currentFolderTracks.length})</span>
+                                </button>
+                              </div>
+
+                              <div className="p-3.5 rounded-xl border border-[#16203D] bg-[#060B18]/60 flex items-center gap-3">
+                                <div className="p-3 rounded-xl bg-[#00F5D4]/15 text-[#00F5D4] border border-[#00F5D4]/30">
+                                  <FolderOpen className="w-6 h-6" />
+                                </div>
+                                <div className="min-w-0 flex-1">
+                                  <h3 className="text-sm font-bold text-white truncate">{selectedFolder}</h3>
+                                  <p className="text-xs text-slate-400">
+                                    📁 /storage/emulated/0/{selectedFolder} • {currentFolderTracks.length} файлов • {formatSeconds(totalSec)}
+                                  </p>
+                                </div>
+                              </div>
+
+                              {/* Tracks inside selected folder */}
+                              <div className="divide-y divide-[#16203D]/50 mt-1">
+                                {currentFolderTracks.map((track, idx) => {
+                                  const isCurrent = currentTrack.id === track.id;
+                                  return (
+                                    <div
+                                      key={track.id}
+                                      onClick={() => handleSelectTrack(tracks.findIndex(t => t.id === track.id))}
+                                      className={`group p-2.5 rounded-xl flex items-center justify-between cursor-pointer transition-all ${
+                                        isCurrent
+                                          ? 'bg-[#00F5D4]/10 border border-[#00F5D4]/30'
+                                          : 'hover:bg-slate-500/5'
+                                      }`}
+                                    >
+                                      <div className="flex items-center gap-3 min-w-0">
+                                        <div className="w-7 text-center text-xs text-slate-400 font-mono">
+                                          {isCurrent && isPlaying ? (
+                                            <div className="flex items-end justify-center gap-0.5 h-4">
+                                              <span className="w-1 bg-[#00F5D4] h-full animate-pulse"></span>
+                                              <span className="w-1 bg-[#00F5D4] h-2/3 animate-bounce"></span>
+                                              <span className="w-1 bg-[#00F5D4] h-3/4 animate-pulse"></span>
+                                            </div>
+                                          ) : (
+                                            idx + 1
+                                          )}
+                                        </div>
+                                        <div className={`w-10 h-10 rounded-xl bg-gradient-to-tr ${track.coverGradient} flex items-center justify-center flex-shrink-0 shadow`}>
+                                          <Music className="w-5 h-5 text-white" />
+                                        </div>
+                                        <div className="min-w-0">
+                                          <h4 className={`text-sm font-semibold truncate ${isCurrent ? 'text-[#00F5D4]' : 'text-slate-200'}`}>
+                                            {track.title}
+                                          </h4>
+                                          <p className="text-xs text-slate-400 truncate">{track.artist} • {track.album}</p>
+                                        </div>
+                                      </div>
+
+                                      <div className="flex items-center gap-2">
+                                        <span className="text-xs text-slate-400 font-mono hidden sm:inline">
+                                          {formatSeconds(track.durationSeconds)}
+                                        </span>
+                                        <button
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            toggleFavorite(track.id);
+                                          }}
+                                          className={`p-1.5 rounded-lg transition-colors ${
+                                            track.isFavorite ? 'text-[#FF007F]' : 'text-slate-400 hover:text-white'
+                                          }`}
+                                        >
+                                          <Heart className={`w-4 h-4 ${track.isFavorite ? 'fill-[#FF007F]' : ''}`} />
+                                        </button>
+                                        <button
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            setShowPlaylistModal(track);
+                                          }}
+                                          className="p-1.5 text-slate-400 hover:text-white rounded-lg transition-colors"
+                                        >
+                                          <ListPlus className="w-4 h-4" />
+                                        </button>
+                                      </div>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          );
+                        })()}
+                      </div>
+                    ) : (
+                      /* Folder grid */
+                      <div className="flex flex-col gap-3">
+                        {foldersList.length === 0 ? (
+                          <div className="py-12 text-center text-slate-400 flex flex-col items-center">
+                            <Folder className="w-12 h-12 text-slate-500 mb-2" />
+                            <p className="font-semibold text-sm">Папки с музыкой не найдены</p>
+                            <p className="text-xs text-slate-500 mt-1">
+                              Нажмите «Выбрать папку на устройстве» чтобы добавить локальные файлы
+                            </p>
+                          </div>
+                        ) : (
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                            {foldersList.map(([folderName, folderTracks]) => {
+                              const totalDurationSec = folderTracks.reduce((acc, t) => acc + t.durationSeconds, 0);
+                              return (
+                                <div
+                                  key={folderName}
+                                  onClick={() => setSelectedFolder(folderName)}
+                                  className="p-3.5 rounded-xl border border-[#16203D] bg-[#060B18]/50 hover:border-[#00F5D4]/40 cursor-pointer transition-all flex flex-col justify-between gap-3 group"
+                                >
+                                  <div className="flex items-start justify-between gap-2">
+                                    <div className="flex items-center gap-3 min-w-0">
+                                      <div className="p-2.5 rounded-xl bg-[#00F5D4]/10 text-[#00F5D4] border border-[#00F5D4]/20 flex-shrink-0 group-hover:scale-105 transition-transform">
+                                        <Folder className="w-5 h-5" />
+                                      </div>
+                                      <div className="min-w-0">
+                                        <h4 className="text-sm font-bold text-slate-200 truncate group-hover:text-[#00F5D4] transition-colors">
+                                          {folderName.split('/').pop()}
+                                        </h4>
+                                        <p className="text-[11px] text-slate-400 truncate">
+                                          {folderName}
+                                        </p>
+                                      </div>
+                                    </div>
+
+                                    <button
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        if (folderTracks.length > 0) {
+                                          handleSelectTrack(tracks.findIndex(t => t.id === folderTracks[0].id));
+                                        }
+                                      }}
+                                      title="Воспроизвести папку"
+                                      className="p-2 rounded-lg bg-[#00F5D4]/10 hover:bg-[#00F5D4] text-[#00F5D4] hover:text-black transition-all flex-shrink-0"
+                                    >
+                                      <Play className="w-3.5 h-3.5 fill-current" />
+                                    </button>
+                                  </div>
+
+                                  <div className="flex items-center justify-between text-[11px] text-slate-400 pt-2 border-t border-[#16203D]/60">
+                                    <span>{folderTracks.length} аудиофайлов</span>
+                                    <span className="font-mono">{formatSeconds(totalDurationSec)}</span>
+                                  </div>
+
+                                  {/* Track previews */}
+                                  <div className="flex flex-wrap gap-1">
+                                    {folderTracks.slice(0, 2).map(t => (
+                                      <span key={t.id} className="text-[10px] px-2 py-0.5 rounded-full bg-slate-800/80 text-slate-300 truncate max-w-[140px]">
+                                        {t.title}
+                                      </span>
+                                    ))}
+                                    {folderTracks.length > 2 && (
+                                      <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-slate-800/50 text-slate-400">
+                                        +{folderTracks.length - 2}
+                                      </span>
+                                    )}
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </div>
                 ) : (
                   <div className="p-3 flex flex-col gap-4">
@@ -1210,53 +1631,112 @@ export default function App() {
 
       {/* FULLSCREEN PLAYER MODAL */}
       {isFullscreenPlayer && (
-        <div className="fixed inset-0 z-50 bg-[#060B18] flex flex-col p-4 sm:p-6 overflow-y-auto animate-in fade-in zoom-in-95 duration-200">
+        <div
+          id="fullscreen-player-modal"
+          onTouchStart={(e) => handleSwipeStart(e.touches[0].clientX, e.touches[0].clientY, e.target)}
+          onTouchMove={(e) => handleSwipeMove(e.touches[0].clientX, e.touches[0].clientY)}
+          onTouchEnd={handleSwipeEnd}
+          onTouchCancel={handleSwipeEnd}
+          onMouseDown={(e) => handleSwipeStart(e.clientX, e.clientY, e.target)}
+          onMouseMove={(e) => isSwiping && handleSwipeMove(e.clientX, e.clientY)}
+          onMouseUp={handleSwipeEnd}
+          className="fixed inset-0 z-50 bg-[#060B18] flex flex-col p-4 sm:p-6 overflow-y-auto overflow-x-hidden select-none animate-in fade-in zoom-in-95 duration-200"
+          style={{
+            transform: `translateY(${Math.max(0, touchOffsetY)}px)`,
+            opacity: touchOffsetY > 0 ? Math.max(0.35, 1 - touchOffsetY / 450) : 1,
+            transition: isSwiping ? 'none' : 'transform 0.25s cubic-bezier(0.2, 0.8, 0.2, 1), opacity 0.25s ease-out',
+            touchAction: 'pan-y'
+          }}
+        >
+          {/* Floating visual cues for swipe action */}
+          {swipeCue === 'down' && (
+            <div className="fixed top-6 left-1/2 -translate-x-1/2 z-50 bg-[#00F5D4] text-black font-bold px-4 py-1.5 rounded-full text-xs shadow-2xl flex items-center gap-1.5 pointer-events-none animate-bounce">
+              <ArrowDown className="w-4 h-4" />
+              <span>Отпустите, чтобы скрыть плеер</span>
+            </div>
+          )}
+
+          {swipeCue === 'next' && (
+            <div className="fixed top-1/2 right-4 sm:right-8 -translate-y-1/2 z-50 bg-gradient-to-r from-[#00F5D4] to-[#00D2FF] text-black font-bold px-4 py-2 rounded-2xl text-xs sm:text-sm shadow-2xl flex items-center gap-2 pointer-events-none animate-pulse">
+              <span>Следующий трек</span>
+              <ChevronRight className="w-4 h-4" />
+            </div>
+          )}
+
+          {swipeCue === 'prev' && (
+            <div className="fixed top-1/2 left-4 sm:left-8 -translate-y-1/2 z-50 bg-gradient-to-r from-[#00D2FF] to-[#00F5D4] text-black font-bold px-4 py-2 rounded-2xl text-xs sm:text-sm shadow-2xl flex items-center gap-2 pointer-events-none animate-pulse">
+              <ChevronLeft className="w-4 h-4" />
+              <span>Предыдущий трек</span>
+            </div>
+          )}
+
           <div className="max-w-md w-full mx-auto flex-1 flex flex-col justify-between">
             
-            {/* Top Bar */}
-            <div className="flex items-center justify-between">
-              <button
-                onClick={() => setIsFullscreenPlayer(false)}
-                className="p-2 rounded-full bg-[#16203D] text-slate-200 hover:bg-[#16203D]/80"
-              >
-                <ChevronDown className="w-6 h-6" />
-              </button>
-              <div className="text-center">
-                <span className="text-xs uppercase tracking-widest text-[#00F5D4] font-bold">Волна Player</span>
-                <p className="text-xs text-slate-400">Локальное воспроизведение</p>
+            {/* Top Drag Handle & Top Bar */}
+            <div>
+              <div
+                className="w-12 h-1.5 rounded-full bg-slate-600/70 hover:bg-slate-500 mx-auto mb-3 cursor-grab shrink-0 transition-colors"
+                title="Свайп вниз для закрытия"
+              />
+              <div className="flex items-center justify-between">
+                <button
+                  onClick={() => setIsFullscreenPlayer(false)}
+                  className="p-2 rounded-full bg-[#16203D] text-slate-200 hover:bg-[#16203D]/80"
+                  title="Закрыть (или свайп вниз)"
+                >
+                  <ChevronDown className="w-6 h-6" />
+                </button>
+                <div className="text-center">
+                  <span className="text-xs uppercase tracking-widest text-[#00F5D4] font-bold">Волна Player</span>
+                  <p className="text-xs text-slate-400">Локальное воспроизведение</p>
+                </div>
+                <button
+                  onClick={() => toggleFavorite(currentTrack.id)}
+                  className="p-2 text-slate-300 hover:text-[#FF007F]"
+                >
+                  <Heart className={`w-6 h-6 ${currentTrack.isFavorite ? 'fill-[#FF007F] text-[#FF007F]' : ''}`} />
+                </button>
               </div>
-              <button
-                onClick={() => toggleFavorite(currentTrack.id)}
-                className="p-2 text-slate-300 hover:text-[#FF007F]"
-              >
-                <Heart className={`w-6 h-6 ${currentTrack.isFavorite ? 'fill-[#FF007F] text-[#FF007F]' : ''}`} />
-              </button>
             </div>
 
-            {/* Giant Album Artwork Vinyl */}
-            <div className="my-4 sm:my-8 flex justify-center">
+            {/* Giant Album Artwork Vinyl (reacts to horizontal swipe) */}
+            <div
+              className="my-4 sm:my-8 flex justify-center"
+              style={{
+                transform: touchOffsetY === 0 ? `translateX(${touchOffsetX * 0.45}px) rotate(${touchOffsetX * 0.02}deg)` : undefined,
+                transition: isSwiping ? 'none' : 'transform 0.25s cubic-bezier(0.2, 0.8, 0.2, 1)'
+              }}
+            >
               <div className={`w-52 h-52 sm:w-72 sm:h-72 rounded-3xl bg-gradient-to-tr ${currentTrack.coverGradient} shadow-2xl shadow-[#00F5D4]/20 flex items-center justify-center relative overflow-hidden transition-transform duration-500 ${isPlaying ? 'scale-105' : 'scale-100'}`}>
                 <Disc3 className={`w-24 h-24 sm:w-32 sm:h-32 text-white/90 ${isPlaying ? 'animate-spin' : ''}`} style={{ animationDuration: '8s' }} />
                 
                 {/* Visualizer wave overlay */}
-                <div className="absolute inset-x-0 bottom-0 h-16 bg-black/40 backdrop-blur-xs flex items-end justify-center px-4 pb-2">
-                  <div className="flex items-end gap-1 w-full justify-center h-8">
-                    {Array.from({ length: 24 }).map((_, i) => (
-                      <div
-                        key={i}
-                        className="w-1.5 bg-[#00F5D4] rounded-full transition-all duration-100"
-                        style={{
-                          height: isPlaying ? `${Math.sin(i * 0.5 + Date.now() / 200) * 40 + 50}%` : '15%'
-                        }}
-                      />
-                    ))}
+                {visualizerEnabled && (
+                  <div className="absolute inset-x-0 bottom-0 h-16 bg-black/40 backdrop-blur-xs flex items-end justify-center px-4 pb-2">
+                    <div className="flex items-end gap-1 w-full justify-center h-8">
+                      {Array.from({ length: 24 }).map((_, i) => (
+                        <div
+                          key={i}
+                          className="w-1.5 bg-[#00F5D4] rounded-full transition-all duration-100"
+                          style={{
+                            height: isPlaying ? `${Math.sin(i * 0.5 + Date.now() / 200) * 40 + 50}%` : '15%'
+                          }}
+                        />
+                      ))}
+                    </div>
                   </div>
-                </div>
+                )}
               </div>
             </div>
 
             {/* Track Details */}
-            <div className="text-center px-2">
+            <div
+              className="text-center px-2"
+              style={{
+                transform: touchOffsetY === 0 ? `translateX(${touchOffsetX * 0.25}px)` : undefined,
+                transition: isSwiping ? 'none' : 'transform 0.25s cubic-bezier(0.2, 0.8, 0.2, 1)'
+              }}
+            >
               <h2 className="text-xl sm:text-2xl font-bold text-white truncate">{currentTrack.title}</h2>
               <p className="text-xs sm:text-sm text-slate-400 mt-1 truncate">{currentTrack.artist} • {currentTrack.album}</p>
             </div>
@@ -1336,6 +1816,20 @@ export default function App() {
               >
                 {repeatMode === 'one' ? <Repeat1 className="w-4 h-4 sm:w-5 sm:h-5" /> : <Repeat className="w-4 h-4 sm:w-5 sm:h-5" />}
               </button>
+            </div>
+
+            {/* Gesture Helper Hint Footer */}
+            <div className="flex items-center justify-center gap-2 sm:gap-4 text-[11px] text-slate-400 select-none pt-2 pb-1 text-center">
+              <span className="flex items-center gap-1">
+                <ArrowDown className="w-3.5 h-3.5 text-[#00F5D4]" />
+                Свайп вниз — скрыть
+              </span>
+              <span>•</span>
+              <span className="flex items-center gap-1">
+                <ChevronLeft className="w-3.5 h-3.5 text-[#00F5D4]" />
+                <ChevronRight className="w-3.5 h-3.5 text-[#00F5D4]" />
+                Свайп влево / вправо — треки
+              </span>
             </div>
 
           </div>
@@ -1453,12 +1947,21 @@ export default function App() {
               <div className="flex items-center justify-between py-2 border-t border-[#16203D]">
                 <div>
                   <h4 className="text-sm font-semibold text-slate-200">Визуализация звука</h4>
-                  <p className="text-xs text-slate-400">Отображать Canvas-спектр в плеере</p>
+                  <p className="text-xs text-slate-400">
+                    {visualizerEnabled ? 'Неоновый визуализатор отображается на главном экране' : 'Неоновый визуализатор скрыт на главном экране'}
+                  </p>
                 </div>
                 <input
                   type="checkbox"
+                  id="toggle-visualizer-setting"
                   checked={visualizerEnabled}
-                  onChange={e => setVisualizerEnabled(e.target.checked)}
+                  onChange={e => {
+                    const nextVal = e.target.checked;
+                    setVisualizerEnabled(nextVal);
+                    try {
+                      localStorage.setItem('volna_visualizer_enabled', String(nextVal));
+                    } catch (err) {}
+                  }}
                   className="w-5 h-5 accent-[#00F5D4] cursor-pointer"
                 />
               </div>

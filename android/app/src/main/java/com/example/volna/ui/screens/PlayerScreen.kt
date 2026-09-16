@@ -2,6 +2,7 @@ package com.example.volna.ui.screens
 
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -15,6 +16,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -27,6 +29,7 @@ import com.example.volna.ui.theme.VolnaPink
 import com.example.volna.ui.theme.VolnaTurquoise
 import com.example.volna.ui.theme.VolnaViolet
 import com.example.volna.ui.viewmodel.MusicPlayerViewModel
+import kotlin.math.abs
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -45,6 +48,8 @@ fun PlayerScreen(
     val track = playerState.currentTrack
     var isDraggingSlider by remember { mutableStateOf(false) }
     var sliderPosition by remember { mutableFloatStateOf(0f) }
+    var totalDragX by remember { mutableFloatStateOf(0f) }
+    var totalDragY by remember { mutableFloatStateOf(0f) }
 
     // Анимация пульсации обложки в такт музыке при воспроизведении
     val infiniteTransition = rememberInfiniteTransition(label = "pulse")
@@ -76,6 +81,40 @@ fun PlayerScreen(
             )
         },
         modifier = modifier
+            .fillMaxSize()
+            .pointerInput(Unit) {
+                detectDragGestures(
+                    onDragStart = {
+                        totalDragX = 0f
+                        totalDragY = 0f
+                    },
+                    onDrag = { change, dragAmount ->
+                        change.consume()
+                        totalDragX += dragAmount.x
+                        totalDragY += dragAmount.y
+                    },
+                    onDragEnd = {
+                        val threshold = 90f
+                        if (abs(totalDragY) > abs(totalDragX)) {
+                            // Сверху вниз - убрать окно воспроизведения
+                            if (totalDragY > threshold) {
+                                onBackClick()
+                            }
+                        } else {
+                            // Справа налево - следующий трек
+                            if (totalDragX < -threshold) {
+                                viewModel.playNext()
+                            }
+                            // Слева направо - предыдущий трек
+                            else if (totalDragX > threshold) {
+                                viewModel.playPrevious()
+                            }
+                        }
+                        totalDragX = 0f
+                        totalDragY = 0f
+                    }
+                )
+            }
     ) { innerPadding ->
         Column(
             modifier = Modifier
