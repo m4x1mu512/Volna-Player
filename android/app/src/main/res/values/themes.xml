@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.Volna" parent="android:Theme.Material.NoActionBar">
+        <item name="android:statusBarColor">#060B18</item>
+        <item name="android:navigationBarColor">#060B18</item>
+        <item name="android:windowBackground">#060B18</item>
+    </style>
+</resources>

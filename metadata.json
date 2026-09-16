@@ -1,0 +1,6 @@
+{
+  "name": "Волна - Музыкальный плеер",
+  "description": "Локальный музыкальный плеер «Волна» для Android на Kotlin, Jetpack Compose и Media3 с красивой визуализацией аудио.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

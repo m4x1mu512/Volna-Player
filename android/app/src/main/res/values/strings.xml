@@ -1,0 +1,5 @@
+<resources>
+    <string name="app_name">Волна</string>
+    <string name="playback_channel_name">Воспроизведение музыки</string>
+    <string name="playback_channel_description">Уведомления службы воспроизведения музыки Волна</string>
+</resources>
