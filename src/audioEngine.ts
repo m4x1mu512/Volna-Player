@@ -7,6 +7,8 @@ class AudioManager {
   private synthGain: GainNode | null = null;
   private synthInterval: number | null = null;
   private isSynthesizing = false;
+  private onEndedCallback: (() => void) | null = null;
+  private isLooping = false;
 
   public init() {
     if (!this.ctx) {
@@ -18,6 +20,12 @@ class AudioManager {
 
       this.audioElement = new Audio();
       this.audioElement.crossOrigin = "anonymous";
+      this.audioElement.loop = this.isLooping;
+      this.audioElement.onended = () => {
+        if (!this.audioElement?.loop && this.onEndedCallback) {
+          this.onEndedCallback();
+        }
+      };
       this.mediaSourceNode = this.ctx.createMediaElementSource(this.audioElement);
       this.mediaSourceNode.connect(this.analyser);
       this.analyser.connect(this.ctx.destination);
@@ -32,6 +40,17 @@ class AudioManager {
     }
   }
 
+  public setLoop(loop: boolean) {
+    this.isLooping = loop;
+    if (this.audioElement) {
+      this.audioElement.loop = loop;
+    }
+  }
+
+  public setOnEnded(callback: (() => void) | null) {
+    this.onEndedCallback = callback;
+  }
+
   public getAnalyser(): AnalyserNode | null {
     return this.analyser;
   }
@@ -40,17 +59,45 @@ class AudioManager {
     return this.audioElement;
   }
 
-  public playAudioUrl(url: string, onEnded?: () => void) {
+  public playAudioUrl(url: string, onEnded?: () => void, onDurationReady?: (duration: number) => void) {
     this.init();
     this.stopSynth();
 
+    if (onEnded) {
+      this.onEndedCallback = onEnded;
+    }
+
     if (this.audioElement) {
       this.audioElement.src = url;
+      this.audioElement.loop = this.isLooping;
       this.audioElement.onended = () => {
-        if (onEnded) onEnded();
+        if (!this.audioElement?.loop && this.onEndedCallback) {
+          this.onEndedCallback();
+        }
+      };
+      this.audioElement.onloadedmetadata = () => {
+        if (this.audioElement && !isNaN(this.audioElement.duration) && isFinite(this.audioElement.duration) && this.audioElement.duration > 0) {
+          if (onDurationReady) {
+            onDurationReady(Math.round(this.audioElement.duration));
+          }
+        }
       };
       this.audioElement.play().catch(e => console.log('Autoplay handled:', e));
     }
+  }
+
+  public getDuration(): number {
+    if (this.audioElement && !isNaN(this.audioElement.duration) && isFinite(this.audioElement.duration)) {
+      return this.audioElement.duration;
+    }
+    return 0;
+  }
+
+  public getCurrentTime(): number {
+    if (this.audioElement && !isNaN(this.audioElement.currentTime)) {
+      return this.audioElement.currentTime;
+    }
+    return 0;
   }
 
   public pause() {

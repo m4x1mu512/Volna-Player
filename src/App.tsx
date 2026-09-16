@@ -77,6 +77,17 @@ const INITIAL_TRACKS: TrackItem[] = [
   }
 ];
 
+const LIBRARY_TABS = [
+  { id: 'tracks', label: 'Треки' },
+  { id: 'artists', label: 'Исполнители' },
+  { id: 'albums', label: 'Альбомы' },
+  { id: 'folders', label: 'Папки' },
+  { id: 'playlists', label: 'Плейлисты' },
+  { id: 'favorites', label: 'Любимые' }
+] as const;
+
+type LibraryTabId = typeof LIBRARY_TABS[number]['id'];
+
 export default function App() {
   // App navigation modes
   const [activeAppTab, setActiveAppTab] = useState<'player' | 'code'>('player');
@@ -87,11 +98,250 @@ export default function App() {
     { id: 1, name: "Для ночных поездок", trackIds: [1, 3] },
     { id: 2, name: "Глубокая концентрация", trackIds: [2, 4] }
   ]);
-  const [activeLibraryTab, setActiveLibraryTab] = useState<'tracks' | 'artists' | 'albums' | 'folders' | 'playlists' | 'favorites'>('tracks');
+  const [activeLibraryTab, setActiveLibraryTab] = useState<LibraryTabId>('tracks');
   const [selectedFolder, setSelectedFolder] = useState<string | null>(null);
+  const [selectedAlbum, setSelectedAlbum] = useState<string | null>(null);
+  const [selectedArtist, setSelectedArtist] = useState<string | null>(null);
+  const [selectedPlaylistId, setSelectedPlaylistId] = useState<number | null>(null);
   const [folderSortBy, setFolderSortBy] = useState<'name' | 'count'>('name');
   const [searchQuery, setSearchQuery] = useState('');
   const [sortOption, setSortOption] = useState<'title' | 'artist' | 'album' | 'folder' | 'duration'>('title');
+
+  // Library swipe navigation handlers & states
+  const currentTabIndex = LIBRARY_TABS.findIndex(t => t.id === activeLibraryTab);
+
+  const handleNextTab = () => {
+    if (currentTabIndex < LIBRARY_TABS.length - 1) {
+      const nextTab = LIBRARY_TABS[currentTabIndex + 1].id;
+      setActiveLibraryTab(nextTab);
+      if (nextTab !== 'folders') setSelectedFolder(null);
+      if (nextTab !== 'albums') setSelectedAlbum(null);
+      if (nextTab !== 'artists') setSelectedArtist(null);
+      if (nextTab !== 'playlists') setSelectedPlaylistId(null);
+    }
+  };
+
+  const handlePrevTab = () => {
+    if (activeLibraryTab === 'folders' && selectedFolder) {
+      setSelectedFolder(null);
+      return;
+    }
+    if (activeLibraryTab === 'albums' && selectedAlbum) {
+      setSelectedAlbum(null);
+      return;
+    }
+    if (activeLibraryTab === 'artists' && selectedArtist) {
+      setSelectedArtist(null);
+      return;
+    }
+    if (activeLibraryTab === 'playlists' && selectedPlaylistId) {
+      setSelectedPlaylistId(null);
+      return;
+    }
+    if (currentTabIndex > 0) {
+      const prevTab = LIBRARY_TABS[currentTabIndex - 1].id;
+      setActiveLibraryTab(prevTab);
+      if (prevTab !== 'folders') setSelectedFolder(null);
+      if (prevTab !== 'albums') setSelectedAlbum(null);
+      if (prevTab !== 'artists') setSelectedArtist(null);
+      if (prevTab !== 'playlists') setSelectedPlaylistId(null);
+    }
+  };
+
+  // Touch gesture tracking
+  const tabTouchStartX = useRef<number | null>(null);
+  const tabTouchStartY = useRef<number | null>(null);
+  const tabTouchMoveX = useRef<number | null>(null);
+  const isHorizontalSwipe = useRef<boolean | null>(null);
+  const [swipeOffset, setSwipeOffset] = useState<number>(0);
+
+  const handleTabTouchStart = (e: React.TouchEvent) => {
+    tabTouchStartX.current = e.touches[0].clientX;
+    tabTouchStartY.current = e.touches[0].clientY;
+    tabTouchMoveX.current = e.touches[0].clientX;
+    isHorizontalSwipe.current = null;
+  };
+
+  const handleTabTouchMove = (e: React.TouchEvent) => {
+    if (tabTouchStartX.current === null || tabTouchStartY.current === null) return;
+    const currentX = e.touches[0].clientX;
+    const currentY = e.touches[0].clientY;
+    const diffX = currentX - tabTouchStartX.current;
+    const diffY = currentY - tabTouchStartY.current;
+
+    if (isHorizontalSwipe.current === null) {
+      if (Math.abs(diffX) > 8 || Math.abs(diffY) > 8) {
+        isHorizontalSwipe.current = Math.abs(diffX) > Math.abs(diffY);
+      }
+    }
+
+    if (isHorizontalSwipe.current) {
+      tabTouchMoveX.current = currentX;
+      // Damped rubber-band offset
+      const clamped = Math.max(-70, Math.min(70, diffX * 0.35));
+      setSwipeOffset(clamped);
+    }
+  };
+
+  const handleTabTouchEnd = () => {
+    if (tabTouchStartX.current !== null && tabTouchMoveX.current !== null && isHorizontalSwipe.current) {
+      const diffX = tabTouchMoveX.current - tabTouchStartX.current;
+      const threshold = 40;
+      if (diffX < -threshold) {
+        handleNextTab();
+      } else if (diffX > threshold) {
+        handlePrevTab();
+      }
+    }
+    tabTouchStartX.current = null;
+    tabTouchStartY.current = null;
+    tabTouchMoveX.current = null;
+    isHorizontalSwipe.current = null;
+    setSwipeOffset(0);
+  };
+
+  // Pointer drag for mouse/trackpad swipe
+  const isPointerDrag = useRef(false);
+  const pointerStartX = useRef<number | null>(null);
+  const pointerStartY = useRef<number | null>(null);
+  const pointerMoveX = useRef<number | null>(null);
+  const isPointerHorizontal = useRef<boolean | null>(null);
+
+  const handleTabPointerDown = (e: React.PointerEvent) => {
+    if (e.button !== 0) return;
+    const target = e.target as HTMLElement;
+    if (target.closest('button, input, select, textarea, a, [role="button"], [data-no-swipe]')) return;
+
+    isPointerDrag.current = true;
+    pointerStartX.current = e.clientX;
+    pointerStartY.current = e.clientY;
+    pointerMoveX.current = e.clientX;
+    isPointerHorizontal.current = null;
+  };
+
+  const handleTabPointerMove = (e: React.PointerEvent) => {
+    if (!isPointerDrag.current || pointerStartX.current === null || pointerStartY.current === null) return;
+    const diffX = e.clientX - pointerStartX.current;
+    const diffY = e.clientY - pointerStartY.current;
+
+    if (isPointerHorizontal.current === null) {
+      if (Math.abs(diffX) > 10 || Math.abs(diffY) > 10) {
+        isPointerHorizontal.current = Math.abs(diffX) > Math.abs(diffY);
+      }
+    }
+
+    if (isPointerHorizontal.current) {
+      pointerMoveX.current = e.clientX;
+      const clamped = Math.max(-70, Math.min(70, diffX * 0.35));
+      setSwipeOffset(clamped);
+    }
+  };
+
+  const handleTabPointerUp = () => {
+    if (isPointerDrag.current && pointerStartX.current !== null && pointerMoveX.current !== null && isPointerHorizontal.current) {
+      const diffX = pointerMoveX.current - pointerStartX.current;
+      const threshold = 45;
+      if (diffX < -threshold) {
+        handleNextTab();
+      } else if (diffX > threshold) {
+        handlePrevTab();
+      }
+    }
+    isPointerDrag.current = false;
+    pointerStartX.current = null;
+    pointerStartY.current = null;
+    pointerMoveX.current = null;
+    isPointerHorizontal.current = null;
+    setSwipeOffset(0);
+  };
+
+  // Auto-scroll active tab into view in the top tab row
+  useEffect(() => {
+    const tabEl = document.getElementById(`tab-library-${activeLibraryTab}`);
+    if (tabEl) {
+      tabEl.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
+    }
+  }, [activeLibraryTab]);
+
+  const formatSeconds = (sec: number) => {
+    if (!sec || isNaN(sec) || sec <= 0) return "00:00";
+    const h = Math.floor(sec / 3600);
+    const m = Math.floor((sec % 3600) / 60);
+    const s = Math.floor(sec % 60);
+    if (h > 0) {
+      return `${h}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+    }
+    return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+  };
+
+  // Filtered and sorted tracks
+  const filteredTracks = useMemo(() => {
+    let result = tracks;
+    if (activeLibraryTab === 'favorites') {
+      result = result.filter(t => t.isFavorite);
+    }
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase();
+      result = result.filter(t =>
+        t.title.toLowerCase().includes(q) ||
+        t.artist.toLowerCase().includes(q) ||
+        t.album.toLowerCase().includes(q) ||
+        (t.folder && t.folder.toLowerCase().includes(q))
+      );
+    }
+    return [...result].sort((a, b) => {
+      if (sortOption === 'title') return a.title.localeCompare(b.title);
+      if (sortOption === 'artist') return a.artist.localeCompare(b.artist);
+      if (sortOption === 'album') return a.album.localeCompare(b.album);
+      if (sortOption === 'folder') return (a.folder || '').localeCompare(b.folder || '');
+      if (sortOption === 'duration') return b.durationSeconds - a.durationSeconds;
+      return 0;
+    });
+  }, [tracks, activeLibraryTab, searchQuery, sortOption]);
+
+  const artistsList = useMemo(() => {
+    const map = new Map<string, TrackItem[]>();
+    tracks.forEach(t => {
+      const list = map.get(t.artist) || [];
+      list.push(t);
+      map.set(t.artist, list);
+    });
+    return Array.from(map.entries()).sort((a, b) => a[0].localeCompare(b[0]));
+  }, [tracks]);
+
+  const albumsList = useMemo(() => {
+    const map = new Map<string, TrackItem[]>();
+    tracks.forEach(t => {
+      const list = map.get(t.album) || [];
+      list.push(t);
+      map.set(t.album, list);
+    });
+    return Array.from(map.entries()).sort((a, b) => a[0].localeCompare(b[0]));
+  }, [tracks]);
+
+  const foldersList = useMemo(() => {
+    const map = new Map<string, TrackItem[]>();
+    tracks.forEach(t => {
+      const folderName = t.folder || 'Внутренняя память/Music';
+      const list = map.get(folderName) || [];
+      list.push(t);
+      map.set(folderName, list);
+    });
+
+    let entries = Array.from(map.entries());
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase();
+      entries = entries.filter(([folderName, folderTracks]) =>
+        folderName.toLowerCase().includes(q) ||
+        folderTracks.some(t => t.title.toLowerCase().includes(q) || t.artist.toLowerCase().includes(q))
+      );
+    }
+
+    if (folderSortBy === 'count') {
+      return entries.sort((a, b) => b[1].length - a[1].length);
+    }
+    return entries.sort((a, b) => a[0].localeCompare(b[0]));
+  }, [tracks, folderSortBy, searchQuery]);
 
   // Player state
   const [currentTrackIndex, setCurrentTrackIndex] = useState<number>(0);
@@ -133,6 +383,76 @@ export default function App() {
   const folderInputRef = useRef<HTMLInputElement | null>(null);
 
   const currentTrack = tracks[currentTrackIndex] || tracks[0];
+
+  // Context-aware playback queue based on active library tab ("Треки", "Альбомы", "Папки", "Исполнители" etc.)
+  const getCurrentQueue = (): TrackItem[] => {
+    if (activeLibraryTab === 'tracks') {
+      return filteredTracks.length > 0 ? filteredTracks : tracks;
+    }
+    if (activeLibraryTab === 'favorites') {
+      const favs = tracks.filter(t => t.isFavorite);
+      return favs.length > 0 ? favs : (filteredTracks.length > 0 ? filteredTracks : tracks);
+    }
+    if (activeLibraryTab === 'albums') {
+      const targetAlbum = selectedAlbum || currentTrack.album;
+      const albumTracks = tracks.filter(t => t.album === targetAlbum);
+      return albumTracks.length > 0 ? albumTracks : tracks;
+    }
+    if (activeLibraryTab === 'artists') {
+      const targetArtist = selectedArtist || currentTrack.artist;
+      const artistTracks = tracks.filter(t => t.artist === targetArtist);
+      return artistTracks.length > 0 ? artistTracks : tracks;
+    }
+    if (activeLibraryTab === 'folders') {
+      const targetFolder = selectedFolder || currentTrack.folder || 'Внутренняя память/Music';
+      const folderTracks = tracks.filter(t => (t.folder || 'Внутренняя память/Music') === targetFolder);
+      return folderTracks.length > 0 ? folderTracks : tracks;
+    }
+    if (activeLibraryTab === 'playlists') {
+      if (selectedPlaylistId) {
+        const pl = playlists.find(p => p.id === selectedPlaylistId);
+        if (pl && pl.trackIds.length > 0) {
+          const plTracks = tracks.filter(t => pl.trackIds.includes(t.id));
+          if (plTracks.length > 0) return plTracks;
+        }
+      }
+      const pl = playlists.find(p => p.trackIds.includes(currentTrack.id));
+      if (pl && pl.trackIds.length > 0) {
+        const plTracks = tracks.filter(t => pl.trackIds.includes(t.id));
+        if (plTracks.length > 0) return plTracks;
+      }
+      return tracks;
+    }
+    return tracks;
+  };
+
+  const getQueueBadgeText = () => {
+    if (activeLibraryTab === 'albums') {
+      return `Альбом • ${selectedAlbum || currentTrack.album}`;
+    }
+    if (activeLibraryTab === 'folders') {
+      const folder = selectedFolder || currentTrack.folder || 'Внутренняя память/Music';
+      return `Папка • ${folder.split('/').pop()}`;
+    }
+    if (activeLibraryTab === 'artists') {
+      return `Исполнитель • ${selectedArtist || currentTrack.artist}`;
+    }
+    if (activeLibraryTab === 'favorites') {
+      return `Любимые треки (${tracks.filter(t => t.isFavorite).length})`;
+    }
+    if (activeLibraryTab === 'playlists') {
+      const pl = playlists.find(p => selectedPlaylistId ? p.id === selectedPlaylistId : p.trackIds.includes(currentTrack.id));
+      return pl ? `Плейлист • ${pl.name}` : `Плейлисты`;
+    }
+    return `Все треки (${filteredTracks.length})`;
+  };
+
+  const playTrackById = (trackId: number) => {
+    const idx = tracks.findIndex(t => t.id === trackId);
+    if (idx !== -1) {
+      handleSelectTrack(idx);
+    }
+  };
 
   // Visualizer Canvas render loop
   useEffect(() => {
@@ -252,14 +572,32 @@ export default function App() {
     let interval: number;
     if (isPlaying) {
       interval = window.setInterval(() => {
-        setCurrentTime(prev => {
-          if (prev >= currentTrack.durationSeconds) {
-            handleTrackEnd();
-            return 0;
+        if (currentTrack.audioUrl) {
+          // Real audio is playing via HTMLAudioElement - never cut off at 3 mins, play entire track
+          const audioElement = audioManager.getAudioElement();
+          if (audioElement) {
+            const actualDuration = audioElement.duration;
+            if (!isNaN(actualDuration) && isFinite(actualDuration) && actualDuration > 0) {
+              const durSec = Math.round(actualDuration);
+              if (currentTrack.durationSeconds !== durSec) {
+                setTracks(prev => prev.map(t => t.id === currentTrack.id ? { ...t, durationSeconds: durSec } : t));
+              }
+            }
+            if (!isNaN(audioElement.currentTime)) {
+              setCurrentTime(Math.floor(audioElement.currentTime));
+            }
           }
-          return prev + 1;
-        });
-      }, 1000);
+        } else {
+          // Demo synth track without audioUrl
+          setCurrentTime(prev => {
+            if (prev >= currentTrack.durationSeconds) {
+              handleTrackEndRef.current();
+              return 0;
+            }
+            return prev + 1;
+          });
+        }
+      }, 500);
     }
     return () => clearInterval(interval);
   }, [isPlaying, currentTrack]);
@@ -291,17 +629,37 @@ export default function App() {
       return;
     }
 
+    // 1. If repeat single track is enabled ('one'), the same track plays in a continuous loop
     if (repeatMode === 'one') {
       setCurrentTime(0);
-      audioManager.seek(0);
-      audioManager.resume();
-    } else if (repeatMode === 'all' || currentTrackIndex < tracks.length - 1) {
-      handleNextTrack();
-    } else {
-      setIsPlaying(false);
-      audioManager.pause();
+      if (currentTrack.audioUrl) {
+        audioManager.seek(0);
+        audioManager.resume();
+      } else {
+        audioManager.startSynth(currentTrack.id % 2 === 0 ? 'synthwave' : 'ambient');
+      }
+      setIsPlaying(true);
+      return;
     }
+
+    // 2. If repeat single track is disabled, proceed to the next track according to current view ("Треки", "Альбомы", "Папки", etc.)
+    handleNextTrack();
   };
+
+  const handleTrackEndRef = useRef<() => void>(handleTrackEnd);
+  handleTrackEndRef.current = handleTrackEnd;
+
+  // Sync repeatMode with audio engine native looping
+  useEffect(() => {
+    audioManager.setLoop(repeatMode === 'one');
+  }, [repeatMode]);
+
+  // Ensure audioManager ended listener calls latest handleTrackEndRef
+  useEffect(() => {
+    audioManager.setOnEnded(() => {
+      handleTrackEndRef.current();
+    });
+  }, []);
 
   const handleTogglePlay = () => {
     if (isPlaying) {
@@ -309,7 +667,13 @@ export default function App() {
       setIsPlaying(false);
     } else {
       if (currentTrack.audioUrl) {
-        audioManager.playAudioUrl(currentTrack.audioUrl, handleTrackEnd);
+        audioManager.playAudioUrl(
+          currentTrack.audioUrl,
+          () => handleTrackEndRef.current(),
+          (dur) => {
+            setTracks(prev => prev.map(t => t.id === currentTrack.id ? { ...t, durationSeconds: dur } : t));
+          }
+        );
       } else {
         audioManager.startSynth(currentTrack.id % 2 === 0 ? 'synthwave' : 'ambient');
       }
@@ -322,7 +686,13 @@ export default function App() {
     setCurrentTime(0);
     const target = tracks[index];
     if (target.audioUrl) {
-      audioManager.playAudioUrl(target.audioUrl, handleTrackEnd);
+      audioManager.playAudioUrl(
+        target.audioUrl,
+        () => handleTrackEndRef.current(),
+        (dur) => {
+          setTracks(prev => prev.map(t => t.id === target.id ? { ...t, durationSeconds: dur } : t));
+        }
+      );
     } else {
       audioManager.startSynth(target.id % 2 === 0 ? 'synthwave' : 'ambient');
     }
@@ -330,12 +700,34 @@ export default function App() {
   };
 
   const handleNextTrack = () => {
+    const queue = getCurrentQueue();
+    if (queue.length === 0) return;
+
     if (isShuffle) {
-      const nextIndex = Math.floor(Math.random() * tracks.length);
-      handleSelectTrack(nextIndex);
+      const otherTracks = queue.filter(t => t.id !== currentTrack.id);
+      const next = otherTracks.length > 0
+        ? otherTracks[Math.floor(Math.random() * otherTracks.length)]
+        : queue[0];
+      playTrackById(next.id);
+      return;
+    }
+
+    const currentIdxInQueue = queue.findIndex(t => t.id === currentTrack.id);
+    if (currentIdxInQueue === -1) {
+      // If current track isn't in current category, start playing from first track of current category
+      playTrackById(queue[0].id);
+    } else if (currentIdxInQueue < queue.length - 1) {
+      // Play next track in active context
+      playTrackById(queue[currentIdxInQueue + 1].id);
     } else {
-      const nextIndex = (currentTrackIndex + 1) % tracks.length;
-      handleSelectTrack(nextIndex);
+      // Reached the end of the current section
+      if (repeatMode === 'all') {
+        playTrackById(queue[0].id);
+      } else {
+        // Repeat mode is off: stop playback after last track
+        setIsPlaying(false);
+        audioManager.pause();
+      }
     }
   };
 
@@ -343,9 +735,19 @@ export default function App() {
     if (currentTime > 3) {
       setCurrentTime(0);
       audioManager.seek(0);
+      return;
+    }
+
+    const queue = getCurrentQueue();
+    if (queue.length === 0) return;
+
+    const currentIdxInQueue = queue.findIndex(t => t.id === currentTrack.id);
+    if (currentIdxInQueue <= 0) {
+      const prev = queue[queue.length - 1];
+      playTrackById(prev.id);
     } else {
-      const prevIndex = (currentTrackIndex - 1 + tracks.length) % tracks.length;
-      handleSelectTrack(prevIndex);
+      const prev = queue[currentIdxInQueue - 1];
+      playTrackById(prev.id);
     }
   };
 
@@ -454,18 +856,30 @@ export default function App() {
         "from-emerald-400 via-teal-600 to-blue-700",
         "from-amber-400 via-orange-500 to-rose-600"
       ];
+      const trackId = Date.now() + idx;
       newTracks.push({
-        id: Date.now() + idx,
+        id: trackId,
         title: cleanName,
         artist: "Локальный файл",
         album: "Загружено на устройство",
-        durationSeconds: 180,
+        durationSeconds: 0,
         isFavorite: false,
         coverGradient: colors[idx % colors.length],
         audioUrl: url,
         isCustomUpload: true,
         folder: "Внутренняя память/Загрузки"
       });
+
+      // Extract real audio duration from file metadata (never capped at 3 minutes)
+      const audioProbe = new Audio();
+      audioProbe.preload = 'metadata';
+      audioProbe.src = url;
+      audioProbe.onloadedmetadata = () => {
+        if (audioProbe.duration && !isNaN(audioProbe.duration) && isFinite(audioProbe.duration) && audioProbe.duration > 0) {
+          const actualDur = Math.round(audioProbe.duration);
+          setTracks(prev => prev.map(t => t.id === trackId ? { ...t, durationSeconds: actualDur } : t));
+        }
+      };
     });
 
     setTracks(prev => [...newTracks, ...prev]);
@@ -496,18 +910,30 @@ export default function App() {
         "from-amber-400 via-orange-500 to-rose-600"
       ];
 
+      const trackId = Date.now() + idx;
       newTracks.push({
-        id: Date.now() + idx,
+        id: trackId,
         title: cleanName,
         artist: "Локальный файл",
         album: folderName.split('/').pop() || "Музыка",
-        durationSeconds: 180,
+        durationSeconds: 0,
         isFavorite: false,
         coverGradient: colors[idx % colors.length],
         audioUrl: url,
         isCustomUpload: true,
         folder: folderName
       });
+
+      // Extract real audio duration from file metadata (never capped at 3 minutes)
+      const audioProbe = new Audio();
+      audioProbe.preload = 'metadata';
+      audioProbe.src = url;
+      audioProbe.onloadedmetadata = () => {
+        if (audioProbe.duration && !isNaN(audioProbe.duration) && isFinite(audioProbe.duration) && audioProbe.duration > 0) {
+          const actualDur = Math.round(audioProbe.duration);
+          setTracks(prev => prev.map(t => t.id === trackId ? { ...t, durationSeconds: actualDur } : t));
+        }
+      };
     });
 
     if (newTracks.length > 0) {
@@ -515,81 +941,6 @@ export default function App() {
       handleSelectTrack(0);
     }
   };
-
-  const formatSeconds = (sec: number) => {
-    const m = Math.floor(sec / 60);
-    const s = Math.floor(sec % 60);
-    return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
-  };
-
-  // Filtered and sorted tracks
-  const filteredTracks = useMemo(() => {
-    let result = tracks;
-    if (activeLibraryTab === 'favorites') {
-      result = result.filter(t => t.isFavorite);
-    }
-    if (searchQuery.trim()) {
-      const q = searchQuery.toLowerCase();
-      result = result.filter(t =>
-        t.title.toLowerCase().includes(q) ||
-        t.artist.toLowerCase().includes(q) ||
-        t.album.toLowerCase().includes(q) ||
-        (t.folder && t.folder.toLowerCase().includes(q))
-      );
-    }
-    return [...result].sort((a, b) => {
-      if (sortOption === 'title') return a.title.localeCompare(b.title);
-      if (sortOption === 'artist') return a.artist.localeCompare(b.artist);
-      if (sortOption === 'album') return a.album.localeCompare(b.album);
-      if (sortOption === 'folder') return (a.folder || '').localeCompare(b.folder || '');
-      if (sortOption === 'duration') return b.durationSeconds - a.durationSeconds;
-      return 0;
-    });
-  }, [tracks, activeLibraryTab, searchQuery, sortOption]);
-
-  const artistsList = useMemo(() => {
-    const map = new Map<string, TrackItem[]>();
-    tracks.forEach(t => {
-      const list = map.get(t.artist) || [];
-      list.push(t);
-      map.set(t.artist, list);
-    });
-    return Array.from(map.entries()).sort((a, b) => a[0].localeCompare(b[0]));
-  }, [tracks]);
-
-  const albumsList = useMemo(() => {
-    const map = new Map<string, TrackItem[]>();
-    tracks.forEach(t => {
-      const list = map.get(t.album) || [];
-      list.push(t);
-      map.set(t.album, list);
-    });
-    return Array.from(map.entries()).sort((a, b) => a[0].localeCompare(b[0]));
-  }, [tracks]);
-
-  const foldersList = useMemo(() => {
-    const map = new Map<string, TrackItem[]>();
-    tracks.forEach(t => {
-      const folderName = t.folder || 'Внутренняя память/Music';
-      const list = map.get(folderName) || [];
-      list.push(t);
-      map.set(folderName, list);
-    });
-
-    let entries = Array.from(map.entries());
-    if (searchQuery.trim()) {
-      const q = searchQuery.toLowerCase();
-      entries = entries.filter(([folderName, folderTracks]) =>
-        folderName.toLowerCase().includes(q) ||
-        folderTracks.some(t => t.title.toLowerCase().includes(q) || t.artist.toLowerCase().includes(q))
-      );
-    }
-
-    if (folderSortBy === 'count') {
-      return entries.sort((a, b) => b[1].length - a[1].length);
-    }
-    return entries.sort((a, b) => a[0].localeCompare(b[0]));
-  }, [tracks, folderSortBy, searchQuery]);
 
   const filteredAndroidFiles = useMemo(() => {
     if (activeStageFilter === 'all') return ANDROID_FILES;
@@ -811,7 +1162,7 @@ export default function App() {
                   <input
                     type="range"
                     min="0"
-                    max={currentTrack.durationSeconds}
+                    max={currentTrack.durationSeconds || 1}
                     value={currentTime}
                     onChange={handleSeek}
                     className="w-full h-1.5 bg-[#16203D] rounded-lg appearance-none cursor-pointer accent-[#00F5D4]"
@@ -979,36 +1330,144 @@ export default function App() {
 
               {/* Library Navigation Tabs */}
               <div className="flex items-center gap-2 overflow-x-auto pb-1 scrollbar-none border-b border-[#16203D]">
-                {[
-                  { id: 'tracks', label: 'Треки', count: tracks.length },
-                  { id: 'artists', label: 'Исполнители', count: artistsList.length },
-                  { id: 'albums', label: 'Альбомы', count: albumsList.length },
-                  { id: 'folders', label: 'Папки', count: foldersList.length },
-                  { id: 'playlists', label: 'Плейлисты', count: playlists.length },
-                  { id: 'favorites', label: 'Любимые', count: tracks.filter(t => t.isFavorite).length }
-                ].map(tab => (
-                  <button
-                    key={tab.id}
-                    id={`tab-library-${tab.id}`}
-                    onClick={() => {
-                      setActiveLibraryTab(tab.id as any);
-                      if (tab.id !== 'folders') setSelectedFolder(null);
-                    }}
-                    className={`px-3 py-2 rounded-t-lg text-xs font-semibold whitespace-nowrap transition-all border-b-2 ${
-                      activeLibraryTab === tab.id
-                        ? 'border-[#00F5D4] text-[#00F5D4] bg-[#00F5D4]/10'
-                        : 'border-transparent text-slate-400 hover:text-slate-200'
-                    }`}
-                  >
-                    {tab.label} <span className="text-[10px] opacity-70">({tab.count})</span>
-                  </button>
-                ))}
+                {LIBRARY_TABS.map(tab => {
+                  const count =
+                    tab.id === 'tracks' ? tracks.length :
+                    tab.id === 'artists' ? artistsList.length :
+                    tab.id === 'albums' ? albumsList.length :
+                    tab.id === 'folders' ? foldersList.length :
+                    tab.id === 'playlists' ? playlists.length :
+                    tracks.filter(t => t.isFavorite).length;
+                  return (
+                    <button
+                      key={tab.id}
+                      id={`tab-library-${tab.id}`}
+                      onClick={() => {
+                        setActiveLibraryTab(tab.id);
+                        if (tab.id !== 'folders') setSelectedFolder(null);
+                      }}
+                      className={`px-3 py-2 rounded-t-lg text-xs font-semibold whitespace-nowrap transition-all border-b-2 ${
+                        activeLibraryTab === tab.id
+                          ? 'border-[#00F5D4] text-[#00F5D4] bg-[#00F5D4]/10'
+                          : 'border-transparent text-slate-400 hover:text-slate-200'
+                      }`}
+                    >
+                      {tab.label} <span className="text-[10px] opacity-70">({count})</span>
+                    </button>
+                  );
+                })}
               </div>
 
-              {/* Tab Content Display */}
-              <div className={`rounded-2xl border flex-1 p-2 overflow-hidden ${
-                themeMode === 'dark' ? 'bg-[#0E162B] border-[#16203D]' : 'bg-white border-slate-200'
+              {/* Swipe Sub-bar / Navigation indicators */}
+              <div className={`flex items-center justify-between px-3 py-1.5 rounded-xl border text-xs ${
+                themeMode === 'dark'
+                  ? 'bg-[#0E162B]/70 border-[#16203D] text-slate-400'
+                  : 'bg-white border-slate-200 text-slate-600 shadow-xs'
               }`}>
+                <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-1 text-[11px] font-medium text-slate-400">
+                    <span className="text-[#00F5D4] font-semibold">Свайп</span>
+                    <span className="opacity-70 hidden sm:inline">влево / вправо</span>
+                    <span className="text-xs">↔</span>
+                  </div>
+                  {/* Tab position dots */}
+                  <div className="flex items-center gap-1.5 ml-1">
+                    {LIBRARY_TABS.map((tab, i) => (
+                      <button
+                        key={tab.id}
+                        id={`tab-dot-${tab.id}`}
+                        onClick={() => {
+                          setActiveLibraryTab(tab.id);
+                          if (tab.id !== 'folders') setSelectedFolder(null);
+                        }}
+                        className={`h-1.5 rounded-full transition-all cursor-pointer ${
+                          i === currentTabIndex
+                            ? 'w-4 bg-[#00F5D4]'
+                            : 'w-1.5 bg-slate-600 hover:bg-slate-400'
+                        }`}
+                        title={`Перейти: ${tab.label}`}
+                      />
+                    ))}
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-1">
+                  <button
+                    id="btn-tab-swipe-prev"
+                    onClick={handlePrevTab}
+                    disabled={currentTabIndex === 0 && !selectedFolder}
+                    title={selectedFolder ? "Назад ко всем папкам" : "Предыдущий раздел (свайп вправо)"}
+                    className="px-2 py-1 rounded-lg hover:bg-slate-700/40 disabled:opacity-30 disabled:cursor-not-allowed transition-all flex items-center gap-1 text-slate-300 cursor-pointer"
+                  >
+                    <ChevronLeft className="w-3.5 h-3.5" />
+                    <span className="text-[11px] hidden sm:inline">
+                      {selectedFolder ? 'Папки' : currentTabIndex > 0 ? LIBRARY_TABS[currentTabIndex - 1].label : ''}
+                    </span>
+                  </button>
+                  <span className="text-[11px] font-mono opacity-60 px-1">
+                    {currentTabIndex + 1}/{LIBRARY_TABS.length}
+                  </span>
+                  <button
+                    id="btn-tab-swipe-next"
+                    onClick={handleNextTab}
+                    disabled={currentTabIndex === LIBRARY_TABS.length - 1}
+                    title="Следующий раздел (свайп влево)"
+                    className="px-2 py-1 rounded-lg hover:bg-slate-700/40 disabled:opacity-30 disabled:cursor-not-allowed transition-all flex items-center gap-1 text-slate-300 cursor-pointer"
+                  >
+                    <span className="text-[11px] hidden sm:inline">
+                      {currentTabIndex < LIBRARY_TABS.length - 1 ? LIBRARY_TABS[currentTabIndex + 1].label : ''}
+                    </span>
+                    <ChevronRight className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              </div>
+
+              {/* Tab Content Display with Swipe Gestures */}
+              <div
+                id="library-tab-content-container"
+                onTouchStart={handleTabTouchStart}
+                onTouchMove={handleTabTouchMove}
+                onTouchEnd={handleTabTouchEnd}
+                onTouchCancel={handleTabTouchEnd}
+                onPointerDown={handleTabPointerDown}
+                onPointerMove={handleTabPointerMove}
+                onPointerUp={handleTabPointerUp}
+                onPointerLeave={handleTabPointerUp}
+                className={`rounded-2xl border flex-1 p-2 overflow-hidden relative select-none touch-pan-y ${
+                  themeMode === 'dark' ? 'bg-[#0E162B] border-[#16203D]' : 'bg-white border-slate-200'
+                }`}
+              >
+                {/* Floating direction pill indicator when swiping */}
+                {swipeOffset !== 0 && (
+                  <div
+                    className={`absolute top-4 z-20 px-3 py-1.5 rounded-full backdrop-blur-md shadow-lg border text-xs font-semibold flex items-center gap-2 pointer-events-none transition-all duration-150 ${
+                      swipeOffset < 0
+                        ? 'right-4 bg-[#00F5D4]/20 border-[#00F5D4]/50 text-[#00F5D4]'
+                        : 'left-4 bg-[#00D2FF]/20 border-[#00D2FF]/50 text-[#00D2FF]'
+                    }`}
+                  >
+                    {swipeOffset < 0 ? (
+                      <>
+                        <span>{currentTabIndex < LIBRARY_TABS.length - 1 ? LIBRARY_TABS[currentTabIndex + 1].label : 'Конец'}</span>
+                        <ChevronRight className="w-4 h-4 animate-pulse" />
+                      </>
+                    ) : (
+                      <>
+                        <ChevronLeft className="w-4 h-4 animate-pulse" />
+                        <span>{selectedFolder ? 'Все папки' : currentTabIndex > 0 ? LIBRARY_TABS[currentTabIndex - 1].label : 'Начало'}</span>
+                      </>
+                    )}
+                  </div>
+                )}
+
+                {/* Animated rubber-band container */}
+                <div
+                  style={{
+                    transform: `translateX(${swipeOffset}px)`,
+                    transition: swipeOffset === 0 ? 'transform 0.22s cubic-bezier(0.25, 1, 0.5, 1)' : 'none'
+                  }}
+                  className="w-full h-full"
+                >
                 {activeLibraryTab === 'tracks' || activeLibraryTab === 'favorites' ? (
                   <div className="divide-y divide-[#16203D]/50">
                     {filteredTracks.length === 0 ? (
@@ -1083,47 +1542,302 @@ export default function App() {
                     )}
                   </div>
                 ) : activeLibraryTab === 'artists' ? (
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 p-2">
-                    {artistsList.map(([artist, artistTracks]) => (
-                      <div
-                        key={artist}
-                        onClick={() => {
-                          const firstTrack = artistTracks[0];
-                          handleSelectTrack(tracks.findIndex(t => t.id === firstTrack.id));
-                        }}
-                        className="p-3.5 rounded-xl border border-[#16203D] bg-[#060B18]/50 hover:border-[#00F5D4]/40 cursor-pointer transition-all flex items-center gap-3"
-                      >
-                        <div className="w-12 h-12 rounded-full bg-gradient-to-br from-[#00D2FF] to-[#9D4EDD] flex items-center justify-center flex-shrink-0 text-white font-bold">
-                          {artist.charAt(0)}
-                        </div>
-                        <div className="min-w-0">
-                          <h4 className="text-sm font-bold text-slate-200 truncate">{artist}</h4>
-                          <p className="text-xs text-slate-400">{artistTracks.length} композиций</p>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
+                  selectedArtist ? (
+                    <div className="p-3 flex flex-col gap-4">
+                      {(() => {
+                        const artistTracks = tracks.filter(t => t.artist === selectedArtist);
+                        const totalSec = artistTracks.reduce((sum, t) => sum + t.durationSeconds, 0);
+
+                        return (
+                          <div className="flex flex-col gap-3">
+                            <div className="flex items-center justify-between">
+                              <button
+                                onClick={() => setSelectedArtist(null)}
+                                className="flex items-center gap-1.5 text-xs text-[#00F5D4] hover:underline font-semibold cursor-pointer"
+                              >
+                                <ArrowLeft className="w-4 h-4" />
+                                <span>Все исполнители</span>
+                              </button>
+                              <button
+                                onClick={() => {
+                                  if (artistTracks.length > 0) {
+                                    playTrackById(artistTracks[0].id);
+                                  }
+                                }}
+                                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-[#00F5D4] text-black text-xs font-bold hover:bg-[#00D2FF] transition-all cursor-pointer shadow-sm"
+                              >
+                                <Play className="w-3.5 h-3.5 fill-black" />
+                                <span>Слушать исполнителя ({artistTracks.length})</span>
+                              </button>
+                            </div>
+
+                            <div className="p-3.5 rounded-xl border border-[#16203D] bg-[#060B18]/60 flex items-center gap-3">
+                              <div className="w-14 h-14 rounded-full bg-gradient-to-br from-[#00D2FF] to-[#9D4EDD] flex items-center justify-center shrink-0 text-white font-bold text-lg shadow">
+                                {selectedArtist.charAt(0)}
+                              </div>
+                              <div className="min-w-0 flex-1">
+                                <h3 className="text-sm font-bold text-white truncate">{selectedArtist}</h3>
+                                <p className="text-xs text-slate-400">
+                                  {artistTracks.length} композиций • {formatSeconds(totalSec)}
+                                </p>
+                              </div>
+                            </div>
+
+                            <div className="divide-y divide-[#16203D]/50 mt-1">
+                              {artistTracks.map((track, idx) => {
+                                const isCurrent = currentTrack.id === track.id;
+                                return (
+                                  <div
+                                    key={track.id}
+                                    onClick={() => playTrackById(track.id)}
+                                    className={`group p-2.5 rounded-xl flex items-center justify-between cursor-pointer transition-all ${
+                                      isCurrent
+                                        ? 'bg-[#00F5D4]/10 border border-[#00F5D4]/30'
+                                        : 'hover:bg-slate-500/5'
+                                    }`}
+                                  >
+                                    <div className="flex items-center gap-3 min-w-0">
+                                      <div className="w-7 text-center text-xs text-slate-400 font-mono">
+                                        {isCurrent && isPlaying ? (
+                                          <div className="flex items-end justify-center gap-0.5 h-4">
+                                            <span className="w-1 bg-[#00F5D4] h-full animate-pulse"></span>
+                                            <span className="w-1 bg-[#00F5D4] h-2/3 animate-bounce"></span>
+                                            <span className="w-1 bg-[#00F5D4] h-3/4 animate-pulse"></span>
+                                          </div>
+                                        ) : (
+                                          idx + 1
+                                        )}
+                                      </div>
+                                      <div className={`w-10 h-10 rounded-xl bg-gradient-to-tr ${track.coverGradient} flex items-center justify-center shrink-0 shadow`}>
+                                        <Music className="w-5 h-5 text-white" />
+                                      </div>
+                                      <div className="min-w-0">
+                                        <h4 className={`text-sm font-semibold truncate ${isCurrent ? 'text-[#00F5D4]' : 'text-slate-200'}`}>
+                                          {track.title}
+                                        </h4>
+                                        <p className="text-xs text-slate-400 truncate">{track.album}</p>
+                                      </div>
+                                    </div>
+
+                                    <div className="flex items-center gap-2">
+                                      <span className="text-xs text-slate-400 font-mono hidden sm:inline">
+                                        {formatSeconds(track.durationSeconds)}
+                                      </span>
+                                      <button
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          toggleFavorite(track.id);
+                                        }}
+                                        className={`p-1.5 rounded-lg transition-colors ${
+                                          track.isFavorite ? 'text-[#FF007F]' : 'text-slate-400 hover:text-white'
+                                        }`}
+                                      >
+                                        <Heart className={`w-4 h-4 ${track.isFavorite ? 'fill-[#FF007F]' : ''}`} />
+                                      </button>
+                                      <button
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          setShowPlaylistModal(track);
+                                        }}
+                                        className="p-1.5 text-slate-400 hover:text-white rounded-lg transition-colors"
+                                      >
+                                        <ListPlus className="w-4 h-4" />
+                                      </button>
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        );
+                      })()}
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 p-2">
+                      {artistsList.map(([artist, artistTracks]) => {
+                        const isCurrentArtist = currentTrack.artist === artist;
+                        return (
+                          <div
+                            key={artist}
+                            onClick={() => setSelectedArtist(artist)}
+                            className={`p-3.5 rounded-xl border bg-[#060B18]/50 hover:border-[#00F5D4]/40 cursor-pointer transition-all flex items-center justify-between gap-3 group ${
+                              isCurrentArtist ? 'border-[#00F5D4]/40 bg-[#00F5D4]/5' : 'border-[#16203D]'
+                            }`}
+                          >
+                            <div className="flex items-center gap-3 min-w-0 flex-1">
+                              <div className="w-12 h-12 rounded-full bg-gradient-to-br from-[#00D2FF] to-[#9D4EDD] flex items-center justify-center shrink-0 text-white font-bold group-hover:scale-105 transition-transform">
+                                {artist.charAt(0)}
+                              </div>
+                              <div className="min-w-0">
+                                <h4 className="text-sm font-bold text-slate-200 truncate group-hover:text-[#00F5D4] transition-colors">{artist}</h4>
+                                <p className="text-xs text-slate-400">{artistTracks.length} композиций</p>
+                              </div>
+                            </div>
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setSelectedArtist(artist);
+                                playTrackById(artistTracks[0].id);
+                              }}
+                              title="Воспроизвести исполнителя"
+                              className="p-2 rounded-lg bg-[#00F5D4]/10 hover:bg-[#00F5D4] text-[#00F5D4] hover:text-black transition-all shrink-0"
+                            >
+                              <Play className="w-3.5 h-3.5 fill-current" />
+                            </button>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )
                 ) : activeLibraryTab === 'albums' ? (
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 p-2">
-                    {albumsList.map(([album, albumTracks]) => (
-                      <div
-                        key={album}
-                        onClick={() => {
-                          const firstTrack = albumTracks[0];
-                          handleSelectTrack(tracks.findIndex(t => t.id === firstTrack.id));
-                        }}
-                        className="p-3.5 rounded-xl border border-[#16203D] bg-[#060B18]/50 hover:border-[#00F5D4]/40 cursor-pointer transition-all flex items-center gap-3"
-                      >
-                        <div className={`w-12 h-12 rounded-xl bg-gradient-to-tr ${albumTracks[0].coverGradient} flex items-center justify-center flex-shrink-0 shadow`}>
-                          <Disc3 className="w-6 h-6 text-white" />
-                        </div>
-                        <div className="min-w-0">
-                          <h4 className="text-sm font-bold text-slate-200 truncate">{album}</h4>
-                          <p className="text-xs text-slate-400">{albumTracks[0].artist} • {albumTracks.length} треков</p>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
+                  selectedAlbum ? (
+                    <div className="p-3 flex flex-col gap-4">
+                      {(() => {
+                        const albumTracks = tracks.filter(t => t.album === selectedAlbum);
+                        const totalSec = albumTracks.reduce((sum, t) => sum + t.durationSeconds, 0);
+                        const firstTrack = albumTracks[0];
+
+                        return (
+                          <div className="flex flex-col gap-3">
+                            <div className="flex items-center justify-between">
+                              <button
+                                onClick={() => setSelectedAlbum(null)}
+                                className="flex items-center gap-1.5 text-xs text-[#00F5D4] hover:underline font-semibold cursor-pointer"
+                              >
+                                <ArrowLeft className="w-4 h-4" />
+                                <span>Все альбомы</span>
+                              </button>
+                              <button
+                                onClick={() => {
+                                  if (albumTracks.length > 0) {
+                                    playTrackById(albumTracks[0].id);
+                                  }
+                                }}
+                                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-[#00F5D4] text-black text-xs font-bold hover:bg-[#00D2FF] transition-all cursor-pointer shadow-sm"
+                              >
+                                <Play className="w-3.5 h-3.5 fill-black" />
+                                <span>Слушать весь альбом ({albumTracks.length})</span>
+                              </button>
+                            </div>
+
+                            <div className="p-3.5 rounded-xl border border-[#16203D] bg-[#060B18]/60 flex items-center gap-3">
+                              <div className={`w-14 h-14 rounded-xl bg-gradient-to-tr ${firstTrack?.coverGradient || 'from-indigo-600 to-violet-600'} flex items-center justify-center shrink-0 shadow`}>
+                                <Disc3 className="w-7 h-7 text-white" />
+                              </div>
+                              <div className="min-w-0 flex-1">
+                                <h3 className="text-sm font-bold text-white truncate">{selectedAlbum}</h3>
+                                <p className="text-xs text-slate-400">
+                                  {firstTrack?.artist || 'Разные исполнители'} • {albumTracks.length} треков • {formatSeconds(totalSec)}
+                                </p>
+                              </div>
+                            </div>
+
+                            <div className="divide-y divide-[#16203D]/50 mt-1">
+                              {albumTracks.map((track, idx) => {
+                                const isCurrent = currentTrack.id === track.id;
+                                return (
+                                  <div
+                                    key={track.id}
+                                    onClick={() => playTrackById(track.id)}
+                                    className={`group p-2.5 rounded-xl flex items-center justify-between cursor-pointer transition-all ${
+                                      isCurrent
+                                        ? 'bg-[#00F5D4]/10 border border-[#00F5D4]/30'
+                                        : 'hover:bg-slate-500/5'
+                                    }`}
+                                  >
+                                    <div className="flex items-center gap-3 min-w-0">
+                                      <div className="w-7 text-center text-xs text-slate-400 font-mono">
+                                        {isCurrent && isPlaying ? (
+                                          <div className="flex items-end justify-center gap-0.5 h-4">
+                                            <span className="w-1 bg-[#00F5D4] h-full animate-pulse"></span>
+                                            <span className="w-1 bg-[#00F5D4] h-2/3 animate-bounce"></span>
+                                            <span className="w-1 bg-[#00F5D4] h-3/4 animate-pulse"></span>
+                                          </div>
+                                        ) : (
+                                          idx + 1
+                                        )}
+                                      </div>
+                                      <div className={`w-10 h-10 rounded-xl bg-gradient-to-tr ${track.coverGradient} flex items-center justify-center shrink-0 shadow`}>
+                                        <Music className="w-5 h-5 text-white" />
+                                      </div>
+                                      <div className="min-w-0">
+                                        <h4 className={`text-sm font-semibold truncate ${isCurrent ? 'text-[#00F5D4]' : 'text-slate-200'}`}>
+                                          {track.title}
+                                        </h4>
+                                        <p className="text-xs text-slate-400 truncate">{track.artist}</p>
+                                      </div>
+                                    </div>
+
+                                    <div className="flex items-center gap-2">
+                                      <span className="text-xs text-slate-400 font-mono hidden sm:inline">
+                                        {formatSeconds(track.durationSeconds)}
+                                      </span>
+                                      <button
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          toggleFavorite(track.id);
+                                        }}
+                                        className={`p-1.5 rounded-lg transition-colors ${
+                                          track.isFavorite ? 'text-[#FF007F]' : 'text-slate-400 hover:text-white'
+                                        }`}
+                                      >
+                                        <Heart className={`w-4 h-4 ${track.isFavorite ? 'fill-[#FF007F]' : ''}`} />
+                                      </button>
+                                      <button
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          setShowPlaylistModal(track);
+                                        }}
+                                        className="p-1.5 text-slate-400 hover:text-white rounded-lg transition-colors"
+                                      >
+                                        <ListPlus className="w-4 h-4" />
+                                      </button>
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        );
+                      })()}
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 p-2">
+                      {albumsList.map(([album, albumTracks]) => {
+                        const isCurrentAlbum = currentTrack.album === album;
+                        return (
+                          <div
+                            key={album}
+                            onClick={() => setSelectedAlbum(album)}
+                            className={`p-3.5 rounded-xl border bg-[#060B18]/50 hover:border-[#00F5D4]/40 cursor-pointer transition-all flex items-center justify-between gap-3 group ${
+                              isCurrentAlbum ? 'border-[#00F5D4]/40 bg-[#00F5D4]/5' : 'border-[#16203D]'
+                            }`}
+                          >
+                            <div className="flex items-center gap-3 min-w-0 flex-1">
+                              <div className={`w-12 h-12 rounded-xl bg-gradient-to-tr ${albumTracks[0].coverGradient} flex items-center justify-center shrink-0 shadow group-hover:scale-105 transition-transform`}>
+                                <Disc3 className="w-6 h-6 text-white" />
+                              </div>
+                              <div className="min-w-0">
+                                <h4 className="text-sm font-bold text-slate-200 truncate group-hover:text-[#00F5D4] transition-colors">{album}</h4>
+                                <p className="text-xs text-slate-400 truncate">{albumTracks[0].artist} • {albumTracks.length} треков</p>
+                              </div>
+                            </div>
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setSelectedAlbum(album);
+                                playTrackById(albumTracks[0].id);
+                              }}
+                              title="Воспроизвести альбом"
+                              className="p-2 rounded-lg bg-[#00F5D4]/10 hover:bg-[#00F5D4] text-[#00F5D4] hover:text-black transition-all shrink-0"
+                            >
+                              <Play className="w-3.5 h-3.5 fill-current" />
+                            </button>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )
                 ) : activeLibraryTab === 'folders' ? (
                   <div className="p-3 flex flex-col gap-4">
                     {/* Top sub-bar for Folders */}
@@ -1417,6 +2131,7 @@ export default function App() {
                     </div>
                   </div>
                 )}
+                </div>
               </div>
 
             </div>
@@ -1746,7 +2461,7 @@ export default function App() {
               <input
                 type="range"
                 min="0"
-                max={currentTrack.durationSeconds}
+                max={currentTrack.durationSeconds || 1}
                 value={currentTime}
                 onChange={handleSeek}
                 className="w-full h-2 bg-[#16203D] rounded-lg appearance-none cursor-pointer accent-[#00F5D4]"
