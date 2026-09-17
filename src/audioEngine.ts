@@ -9,6 +9,7 @@ class AudioManager {
   private isSynthesizing = false;
   private onEndedCallback: (() => void) | null = null;
   private isLooping = false;
+  private currentUrl: string | null = null;
 
   public init() {
     if (!this.ctx) {
@@ -59,7 +60,16 @@ class AudioManager {
     return this.audioElement;
   }
 
-  public playAudioUrl(url: string, onEnded?: () => void, onDurationReady?: (duration: number) => void) {
+  public isCurrentUrl(url: string): boolean {
+    return !!(this.audioElement && this.currentUrl === url && this.audioElement.src);
+  }
+
+  public playAudioUrl(
+    url: string,
+    onEnded?: () => void,
+    onDurationReady?: (duration: number) => void,
+    startAt: number = 0
+  ) {
     this.init();
     this.stopSynth();
 
@@ -68,20 +78,41 @@ class AudioManager {
     }
 
     if (this.audioElement) {
-      this.audioElement.src = url;
-      this.audioElement.loop = this.isLooping;
-      this.audioElement.onended = () => {
-        if (!this.audioElement?.loop && this.onEndedCallback) {
-          this.onEndedCallback();
-        }
-      };
-      this.audioElement.onloadedmetadata = () => {
-        if (this.audioElement && !isNaN(this.audioElement.duration) && isFinite(this.audioElement.duration) && this.audioElement.duration > 0) {
-          if (onDurationReady) {
-            onDurationReady(Math.round(this.audioElement.duration));
+      const isSameSrc = this.currentUrl === url && this.audioElement.src;
+      this.currentUrl = url;
+
+      if (!isSameSrc) {
+        this.audioElement.src = url;
+        this.audioElement.loop = this.isLooping;
+        this.audioElement.onended = () => {
+          if (!this.audioElement?.loop && this.onEndedCallback) {
+            this.onEndedCallback();
+          }
+        };
+        this.audioElement.onloadedmetadata = () => {
+          if (this.audioElement && !isNaN(this.audioElement.duration) && isFinite(this.audioElement.duration) && this.audioElement.duration > 0) {
+            if (onDurationReady) {
+              onDurationReady(Math.round(this.audioElement.duration));
+            }
+          }
+          if (startAt > 0 && this.audioElement) {
+            try {
+              this.audioElement.currentTime = startAt;
+            } catch (e) {
+              console.log('Seek on metadata load handled:', e);
+            }
+          }
+        };
+      } else {
+        if (startAt >= 0 && Math.abs(this.audioElement.currentTime - startAt) > 0.5) {
+          try {
+            this.audioElement.currentTime = startAt;
+          } catch (e) {
+            console.log('Seek on same src handled:', e);
           }
         }
-      };
+      }
+
       this.audioElement.play().catch(e => console.log('Autoplay handled:', e));
     }
   }
@@ -107,18 +138,31 @@ class AudioManager {
     this.stopSynth();
   }
 
-  public resume() {
+  public resume(startAt?: number) {
     this.init();
     if (this.audioElement && this.audioElement.src && this.audioElement.src !== window.location.href) {
-      this.audioElement.play().catch(e => console.log(e));
+      if (typeof startAt === 'number' && !isNaN(startAt) && startAt >= 0) {
+        if (Math.abs(this.audioElement.currentTime - startAt) > 0.5) {
+          try {
+            this.audioElement.currentTime = startAt;
+          } catch (e) {
+            console.log('Seek on resume error:', e);
+          }
+        }
+      }
+      this.audioElement.play().catch(e => console.log('Resume playback error:', e));
     } else {
       this.startSynth();
     }
   }
 
   public seek(seconds: number) {
-    if (this.audioElement && !isNaN(this.audioElement.duration)) {
-      this.audioElement.currentTime = seconds;
+    if (this.audioElement) {
+      try {
+        this.audioElement.currentTime = seconds;
+      } catch (e) {
+        console.log('Seek error:', e);
+      }
     }
   }
 

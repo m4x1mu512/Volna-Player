@@ -219,7 +219,7 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
         }
     }
 
-    fun playTrack(track: Track, playlist: List<Track> = tracks.value) {
+    fun playTrack(track: Track, playlist: List<Track> = tracks.value, startPositionMs: Long = 0L) {
         val controller = mediaController ?: return
         val startIndex = playlist.indexOfFirst { it.id == track.id }.coerceAtLeast(0)
 
@@ -238,7 +238,7 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
                 .build()
         }
 
-        controller.setMediaItems(mediaItems, startIndex, 0L)
+        controller.setMediaItems(mediaItems, startIndex, startPositionMs)
         controller.prepare()
         controller.play()
 
@@ -258,7 +258,8 @@ class MusicPlayerViewModel(application: Application) : AndroidViewModel(applicat
             controller.pause()
         } else {
             if (controller.playbackState == Player.STATE_IDLE && _playerUiState.value.currentTrack != null) {
-                playTrack(_playerUiState.value.currentTrack!!)
+                val resumePos = _playerUiState.value.currentPositionMs
+                playTrack(_playerUiState.value.currentTrack!!, startPositionMs = resumePos)
             } else {
                 controller.play()
             }

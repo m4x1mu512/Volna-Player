@@ -666,15 +666,31 @@ export default function App() {
       audioManager.pause();
       setIsPlaying(false);
     } else {
+      // If the track reached the end, restart from 0, otherwise resume from paused position
+      const isAtEnd = currentTrack.durationSeconds > 0 && currentTime >= currentTrack.durationSeconds;
+      const targetTime = isAtEnd ? 0 : currentTime;
+
+      if (isAtEnd) {
+        setCurrentTime(0);
+      }
+
       if (currentTrack.audioUrl) {
-        audioManager.playAudioUrl(
-          currentTrack.audioUrl,
-          () => handleTrackEndRef.current(),
-          (dur) => {
-            setTracks(prev => prev.map(t => t.id === currentTrack.id ? { ...t, durationSeconds: dur } : t));
-          }
-        );
+        if (audioManager.isCurrentUrl(currentTrack.audioUrl)) {
+          // Already loaded in audio engine: resume playback from the exact paused/seeked position
+          audioManager.resume(targetTime);
+        } else {
+          // First time loading this audio: start at targetTime
+          audioManager.playAudioUrl(
+            currentTrack.audioUrl,
+            () => handleTrackEndRef.current(),
+            (dur) => {
+              setTracks(prev => prev.map(t => t.id === currentTrack.id ? { ...t, durationSeconds: dur } : t));
+            },
+            targetTime
+          );
+        }
       } else {
+        // Demo synth track: resume synthesizer, currentTime continues from where it was paused
         audioManager.startSynth(currentTrack.id % 2 === 0 ? 'synthwave' : 'ambient');
       }
       setIsPlaying(true);
@@ -691,7 +707,8 @@ export default function App() {
         () => handleTrackEndRef.current(),
         (dur) => {
           setTracks(prev => prev.map(t => t.id === target.id ? { ...t, durationSeconds: dur } : t));
-        }
+        },
+        0
       );
     } else {
       audioManager.startSynth(target.id % 2 === 0 ? 'synthwave' : 'ambient');
@@ -2264,6 +2281,13 @@ export default function App() {
         <div className={`fixed bottom-0 left-0 right-0 z-20 border-t ${
           themeMode === 'dark' ? 'bg-[#0E162B]/95 border-[#16203D]' : 'bg-white/95 border-slate-200'
         } backdrop-blur-lg px-3 py-2 sm:px-6 w-full max-w-full overflow-hidden`}>
+          {/* Subtle top progress bar */}
+          <div className="absolute top-0 left-0 right-0 h-0.5 bg-[#16203D]/60 pointer-events-none">
+            <div
+              className="h-full bg-gradient-to-r from-[#00F5D4] to-[#00D2FF] transition-all duration-300"
+              style={{ width: `${Math.min(100, (currentTime / (currentTrack.durationSeconds || 1)) * 100)}%` }}
+            />
+          </div>
           <div className="max-w-7xl mx-auto flex items-center justify-between gap-2 sm:gap-4">
             
             {/* Left: Track identity */}
